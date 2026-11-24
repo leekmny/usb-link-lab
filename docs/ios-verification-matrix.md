@@ -1,0 +1,13 @@
+# iPhone verification matrix
+
+| Requirement | Environment/version | Command or action | Expected | Observed | Evidence | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| Canonical contract | Windows 11 Pro, PowerShell | Extract both Appendix A bodies as UTF-8/LF and compute SHA-256 | Shared revision and digest | Both prompt appendices and the committed file have the prescribed digest | `protocol/PROTOCOL_V1.md`, foundation commit `78f451c` | PASS |
+| Deterministic public vectors | CPython 3.14.8, cryptography 50.0.2 on Windows | `python tools/fixtures/generate_ulab1.py --check` | Corpus regenerates and known answers match | 24 exchanges, 15 malformed bodies, six boundary cases | `protocol/vectors/ulab1.json` | PASS |
+| Windows codec reads shared corpus | CPython 3.12.16, cryptography 50.0.0 | Exercise the sibling Windows endpoint codec with both corpora | Identical records and common negative cases rejected | 7 handshake fields, 10 keys, 136 records, 15 malformed bodies in all modes | Local `platform/windows` checkout and iOS corpus | PASS |
+| Apple Swift core and disk | GitHub Actions macOS | `swift test --package-path apps/ios` | Fixed records, protocol, state, loopback and disk tests pass | Hosted run started | [iPhone workflow](https://github.com/leekmny/usb-link-lab/actions/workflows/ios.yml) | NOT RUN |
+| Native interface | iPhone 17 Pro Max simulator, iOS 26.2 | Run UI tests with labeled synthetic content | Korean UI, mode selection, diagnostics and capture cases | Hosted run started | iPhone workflow, simulator job | NOT RUN |
+| Device IPA | GitHub Actions, Xcode 16.4 | `bash apps/ios/scripts/build-unsigned.sh` | Unsigned arm64 iphoneos IPA with checksum and metadata | Hosted run started | iPhone workflow, device job | NOT RUN |
+| Signing, install, launch | Windows 11 and user-reported iPhone 17 Pro Max, iOS 27.0.1 | Sign locally, install over USB, launch in foreground | iPhone app starts and listener becomes ready | Apple Mobile Device Service was absent at initial inspection; no signed build observed | `docs/ios-handoff.md` | BLOCKED |
+| Two native apps on physical USB | Paired physical endpoints, wireless disabled | Bidirectional text/image/file in four modes, verify digests and disconnect/cancel | Correct ACK, saved bytes, cable removal stops link | Requires signed iPhone launch and verified Windows device access | `docs/ios-handoff.md` | BLOCKED |
+| Physical reliability and performance | Actual paired endpoints | Large synthetic files, timed runs, memory and interruption checks | Measurements documented for this equipment | Requires physical USB gate | Hardware evidence pending | BLOCKED |

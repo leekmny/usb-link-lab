@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum StoreFailure: Error {
@@ -16,11 +17,12 @@ struct LabStore: Sendable {
     private let received: URL
 
     init(root: URL) throws {
-        outgoing = root.appendingPathComponent("outgoing", isDirectory: true)
-        receiving = root.appendingPathComponent("receiving", isDirectory: true)
-        received = root.appendingPathComponent("received", isDirectory: true)
         try Self.makePrivateDirectory(root)
-        var privateRoot = root
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        outgoing = canonicalRoot.appendingPathComponent("outgoing", isDirectory: true)
+        receiving = canonicalRoot.appendingPathComponent("receiving", isDirectory: true)
+        received = canonicalRoot.appendingPathComponent("received", isDirectory: true)
+        var privateRoot = canonicalRoot
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         try privateRoot.setResourceValues(values)
@@ -121,16 +123,15 @@ struct LabStore: Sendable {
     private func snapshot(
         _ source: URL, id: UUID, kind: ItemKind, name: String, mediaType: String
     ) throws -> ItemMetadata {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]
-        let before = try source.resourceValues(forKeys: keys)
-        guard before.isRegularFile == true, before.isSymbolicLink != true,
-              let rawSize = before.fileSize, rawSize >= 0 else { throw StoreFailure.invalidSource }
-        let size = UInt64(rawSize)
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw StoreFailure.invalidSource }
+        let reader = try FileHandle(forReadingFrom: source)
+        defer { try? reader.close() }
+        let before = try FileStamp(reader)
+        let size = before.size
         let metadata = try ItemMetadata(kind: kind, name: name, mediaType: mediaType, size: size)
         try Self.checkCapacity(size, at: outgoing)
 
-        let reader = try FileHandle(forReadingFrom: source)
-        defer { try? reader.close() }
         try Self.publishFile(to: outgoingURL(id)) { writer in
             var remaining = size
             while remaining > 0 {
@@ -142,14 +143,32 @@ struct LabStore: Sendable {
                 try writer.write(contentsOf: block)
                 remaining -= UInt64(block.count)
             }
-            let after = try URL(fileURLWithPath: source.path).resourceValues(forKeys: keys)
-            guard try reader.read(upToCount: 1)?.isEmpty != false,
-                  after.fileSize == rawSize, after.contentModificationDate == before.contentModificationDate else {
+            // Both stamps come from the open descriptor, avoiding stale per-URL resource caches.
+            guard try reader.read(upToCount: 1)?.isEmpty != false, try FileStamp(reader) == before else {
                 throw StoreFailure.sourceChanged
             }
             try Task.checkCancellation()
         }
         return metadata
+    }
+
+    private struct FileStamp: Equatable {
+        let size: UInt64
+        let modifiedSeconds: Int
+        let modifiedNanoseconds: Int
+        let changedSeconds: Int
+        let changedNanoseconds: Int
+
+        init(_ file: FileHandle) throws {
+            var info = stat()
+            guard fstat(file.fileDescriptor, &info) == 0, info.st_size >= 0,
+                  info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { throw StoreFailure.invalidSource }
+            size = UInt64(info.st_size)
+            modifiedSeconds = info.st_mtimespec.tv_sec
+            modifiedNanoseconds = info.st_mtimespec.tv_nsec
+            changedSeconds = info.st_ctimespec.tv_sec
+            changedNanoseconds = info.st_ctimespec.tv_nsec
+        }
     }
 
     fileprivate static func publishFile(to target: URL, write: (FileHandle) throws -> Void) throws {
