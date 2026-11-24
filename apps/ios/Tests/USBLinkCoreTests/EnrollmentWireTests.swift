@@ -82,7 +82,7 @@ final class EnrollmentWireTests: XCTestCase {
         }
     }
 
-    func testWrongCodeAndChangedConfirmationFail() async throws {
+    func testWrongCodeAndChangedConfirmationFail() async {
         await assertRejected { _ = try await self.exchange(matchingCode: false) }
         await assertRejected {
             _ = try await self.exchange(matchingCode: true, replaceClientTag: Data(repeating: 0, count: 32))

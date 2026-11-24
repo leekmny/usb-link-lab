@@ -463,7 +463,9 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual([meta.type, data.type, end.type], [.meta, .data, .end])
         XCTAssertEqual(body, Data("first".utf8))
         let oldSession = await s.session
+        let oldReader = oldSession?.reader
         await s.cancelActive()
+        XCTAssertTrue(oldReader?.isCancelled == true)
         let result = await s.snapshot()
         let firstRow = try XCTUnwrap(result.records.first)
         XCTAssertTrue(result.paused)
@@ -482,15 +484,8 @@ final class SessionTests: XCTestCase {
         let (retry, _) = try await next.next()
         XCTAssertEqual(retry.mode, first.mode)
         XCTAssertNotEqual(retry.itemID, first.itemID)
-        let reads = await c.stream.output.reads
-        try await c.send(.ack, first.mode, first.itemID, WireBody.ack(.complete))
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-        var delivered = await c.stream.output.reads
-        while delivered == reads, ContinuousClock.now < deadline {
-            try await Task.sleep(for: .milliseconds(2))
-            delivered = await c.stream.output.reads
-        }
-        XCTAssertGreaterThan(delivered, reads)
+        // The old reader is deliberately cancelled at disconnect. Inject a
+        // late failure callback without requiring it to resume a closed read.
         c.stream.close()
         if let oldSession { await s.fail(SessionFault.closed, session: oldSession) }
         let fresh = await s.snapshot()
