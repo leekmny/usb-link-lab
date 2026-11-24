@@ -41,6 +41,27 @@ jobs:
           xcodebuild -version
           swift --version
           swift test --package-path apps/ios
+      - name: Exercise the Windows companion over local TCP
+        run: |
+          if [[ -f apps/windows/usblinklab/session.py ]]; then
+            windows="$GITHUB_WORKSPACE"
+          else
+            windows="$RUNNER_TEMP/windows-companion"
+            remote="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+            if git ls-remote --exit-code --refs "$remote" refs/heads/platform/windows >/dev/null; then
+              git clone --quiet --depth 1 --branch platform/windows "$remote" "$windows"
+            else
+              rc=$?
+              if [[ "$rc" == 2 ]]; then
+                echo "Windows companion branch is not published yet."
+                exit 0
+              fi
+              exit "$rc"
+            fi
+          fi
+          git -C "$windows" rev-parse HEAD
+          ULAB_WINDOWS_SOURCE="$windows/apps/windows" ULAB_PYTHON="$(command -v python)" \
+            swift test --package-path apps/ios --filter CompanionInteropTests
 
   device:
     name: Unsigned arm64 device artifact

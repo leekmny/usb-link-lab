@@ -45,3 +45,24 @@ The Windows endpoint selects the plugged-in device via the Apple service, then c
 Disable wireless transports for acceptance. Transfer a Korean message, a synthetic image and an ordinary file in each direction in all four modes. Compare source and saved SHA-256 values. Also try an empty file, a chunk boundary, backgrounding, session cancellation, and unplugging while an item is active. Preserve metadata-only evidence. Verify the completion ACK in ordinary operation and correct interruption statuses after disconnect.
 
 Disconnect after END can leave a saved receiver item with delivery unconfirmed on the sender. A manual retry through a new authenticated session can create a duplicate. USB-only host selection and the cable-pull test establish the transport. The loopback listener itself has no physical-link metadata.
+
+## Reproducible research measurements
+
+Direct USB provides the baseline for any later Pi measurement. Use the same deterministic
+files, per-mode ordering, cable, USB port and app commits in both phases. Record iOS,
+Windows and Apple service versions. For each run preserve direction, mode, source byte
+count, source and saved SHA-256, completion status, and whether the cable stayed plugged in.
+Separate staging time, handshake time and elapsed time from OPEN to complete ACK.
+Compute payload throughput as saved bytes divided by the OPEN-to-complete interval.
+For each condition report repetitions, median and range as well as interrupted attempts;
+omit throughput for transfers without a confirmed final ACK.
+
+Use the named plaintext and authenticated-mode fixture tests to check that content
+observability and integrity claims agree with the protocol. Plaintext and HMAC carry
+original bytes at the application stream boundary. The AEAD modes protect those bytes;
+frame lengths, modes, IDs and timing remain visible. The prefix/header tag and complete
+ACK authenticate their own fields independently of a Plaintext body's digest.
+
+The Python companion conformance test uses the real Windows Session and Storage
+modules against the Swift loopback endpoint. Its synthetic local TCP result is recorded
+separately from physical USB and from any future Pi measurements.
