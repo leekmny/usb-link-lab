@@ -1,0 +1,87 @@
+import Foundation
+import XCTest
+@testable import USBLinkCore
+
+final class StoreTests: XCTestCase {
+    private var root: URL!
+    private var store: LabStore!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        store = try LabStore(root: root)
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: root)
+    }
+
+    func testSnapshotFreezesExternalFileAndPreservesEmptyFile() throws {
+        let source = root.appendingPathComponent("external.bin")
+        let id = UUID()
+        try Data([0, 255, 0]).write(to: source)
+        let metadata = try store.stageAttachment(
+            source, id: id, kind: .file, name: "external.bin", mediaType: "application/octet-stream"
+        )
+        try Data().write(to: source)
+        XCTAssertEqual(metadata.size, 3)
+        XCTAssertEqual(try Data(contentsOf: store.outgoingURL(id)), Data([0, 255, 0]))
+
+        let emptyID = UUID()
+        let empty = try store.stageAttachment(
+            source, id: emptyID, kind: .file, name: "empty.bin", mediaType: "application/octet-stream"
+        )
+        XCTAssertEqual(empty.size, 0)
+        XCTAssertEqual(try Data(contentsOf: store.outgoingURL(emptyID)), Data())
+        try store.pruneOutgoing(keeping: [emptyID])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.outgoingURL(id).path))
+    }
+
+    func testReceiveCommitCanBeReloadedAndDiscardDoesNotPublish() throws {
+        let savedID = UUID()
+        let metadata = try ItemMetadata(
+            kind: .file, name: "independent.bin", mediaType: "application/octet-stream", size: 2
+        )
+        let discarded = try store.beginIncoming(UUID(), metadata: metadata)
+        try discarded.append(Data([1]))
+        discarded.discard()
+        XCTAssertTrue(try store.loadReceived().isEmpty)
+
+        let sink = try store.beginIncoming(savedID, metadata: metadata)
+        try sink.append(Data([0, 255]))
+        let url = try sink.commit(mode: .hmacSHA256)
+        let records = try LabStore(root: root).loadReceived()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.id, savedID)
+        XCTAssertEqual(record.fileURL, url)
+        XCTAssertEqual(record.mode, .hmacSHA256)
+        XCTAssertEqual(try Data(contentsOf: url), Data([0, 255]))
+    }
+
+    func testInvalidUTF8AndFailedCommitDoNotPublish() throws {
+        let text = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8", size: 1)
+        let invalid = try store.beginIncoming(UUID(), metadata: text)
+        try invalid.append(Data([0xff]))
+        XCTAssertThrowsError(try invalid.commit(mode: .plaintext))
+        XCTAssertTrue(try store.loadReceived().isEmpty)
+
+        let id = UUID()
+        let valid = try store.beginIncoming(id, metadata: text)
+        try valid.append(Data([0x61]))
+        let marker = root.appendingPathComponent("received").appendingPathComponent(id.uuidString)
+        try FileManager.default.createDirectory(at: marker, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try valid.commit(mode: .aes256GCM))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.appendingPathComponent("payload").path))
+        try FileManager.default.removeItem(at: marker)
+        XCTAssertTrue(try store.loadReceived().isEmpty)
+    }
+
+    func testEmptyTextCommitsAndPublicFixtureIsRejectedViaLiveKeychain() throws {
+        let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8", size: 0)
+        let sink = try store.beginIncoming(UUID(), metadata: metadata)
+        let url = try sink.commit(mode: .chacha20Poly1305)
+        XCTAssertEqual(try Data(contentsOf: url), Data())
+        XCTAssertThrowsError(try PairingKeychain.save(Data(0..<32)))
+        XCTAssertEqual(try PairingKeychain.generate().count, 32)
+    }
+}
