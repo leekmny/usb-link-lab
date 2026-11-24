@@ -6,6 +6,7 @@
 - Contract: `ULAB1-20261124-R1`; SHA-256 `535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f`
 - App bundle ID: `org.usblinklab.ios`; deployment target: iOS 17; device architecture: arm64
 - Source: `apps/ios/USBLinkLab.xcodeproj`, `App.xcconfig`, and local `USBLinkCore` Swift package. The app and core use Apple platform frameworks with zero external Swift packages.
+- Device release: [iPhone 0.1.0 unsigned prerelease](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.0); build commit `088a335389a33429d14eccce229ed390d1572d1b`.
 - Evidence: [verification matrix](ios-verification-matrix.md) and [iPhone workflow](https://github.com/leekmny/usb-link-lab/actions/workflows/ios.yml)
 
 ## Build and verify
@@ -30,7 +31,7 @@ The device build verifies iphoneos, arm64, iOS 17, bundle ID, and the absence of
 
 ## Windows-only signing and installation
 
-The proposed Windows path is [Sideloadly](https://sideloadly.io/) over USB. Its Windows documentation calls for Apple-distributed iTunes and iCloud and advertises iOS 27 support. [AltStore Classic](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows) requires AltServer/AltStore and Apple prerequisites. The user's model and version are iPhone 17 Pro Max and iOS 27.0.1. Sideloadly compatibility and provisioning on the actual equipment require the installation check.
+The selected Windows path is [Sideloadly](https://sideloadly.io/) over USB. Its Windows documentation calls for Apple-distributed iTunes and iCloud and advertises iOS 27 support. [AltStore Classic](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows) requires AltServer/AltStore and Apple prerequisites. The user's model and version are iPhone 17 Pro Max and iOS 27.0.1. Windows detected the phone via Apple Mobile Device Support 20.0.1.47, and the user confirmed that Sideloadly 0.72 showed the connected device. The tethered signing, installation, launch and application-session checks are tracked below.
 
 1. Connect the iPhone with a data cable, unlock it and complete the [Trust This Computer](https://support.apple.com/en-us/109054) prompts.
 2. Install the vendor-documented Windows prerequisites if absent and confirm the phone appears in the Apple application. Confirm with the device owner before replacing an existing Apple installation.
