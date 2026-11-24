@@ -18,8 +18,22 @@ extension USBServer {
             scheduleNext(s)
             while true {
                 // Idle connections may wait indefinitely for the first byte.
-                var prefix = try await s.stream.exact(1)
+                var prefix = try await s.stream.read(upTo: 1)
                 try validate(s)
+                if prefix.isEmpty {
+                    // The peer can observe our READY and close before its local write
+                    // callback resumes. Confirm that write at this clean frame boundary.
+                    guard s.readyReceived, s.readyEnqueued else { throw SessionFault.closed }
+                    if !s.readyWritten {
+                        guard let ticket = s.writerTail else { throw SessionFault.closed }
+                        try await ticket.value
+                        try validate(s)
+                        s.readyWritten = true
+                    }
+                    finishDrain(s)
+                    return
+                }
+                guard prefix.count == 1 else { throw SessionFault.protocolViolation }
                 s.frameDeadline = .now.advanced(by: .seconds(10))
                 armTimeout(s)
                 prefix.append(try await s.stream.exact(3))
@@ -38,24 +52,11 @@ extension USBServer {
                 try await receive(header, body: body, session: s)
                 armTimeout(s)
             }
-        } catch {
-            // The peer can see our READY and close before its local write callback
-            // resumes on this actor. Resolve that write before classifying the EOF.
-            if (error as? SessionFault) == .closed, session === s, s.readyReceived,
-               s.readyEnqueued, !s.readyWritten, s.frameDeadline == nil, let ticket = s.writerTail {
-                do { try await ticket.value; try validate(s); s.readyWritten = true }
-                catch { fail(error, session: s); return }
-            }
-            fail(error, session: s)
-        }
+        } catch { fail(error, session: s) }
     }
 
     func fail(_ error: Error, session s: LiveSession) {
         guard session === s else { return }
-        if s.drained, s.frameDeadline == nil, (error as? SessionFault) == .closed {
-            disconnect("listening", pause: false)
-            return
-        }
         let reason = (error as? SessionFault)?.errorDescription ?? "protocol_error"
         disconnect(reason, pause: s.keys != nil)
     }

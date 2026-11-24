@@ -3,6 +3,7 @@ import Network
 
 /// One ordered byte stream. A short read is normal. Only one reader is permitted.
 protocol SessionStream: AnyObject, Sendable {
+    /// An empty result is orderly EOF. Transport failures throw even at a frame boundary.
     func read(upTo count: Int) async throws -> Data
     func write(_ bytes: Data) async throws
     func close()
@@ -41,8 +42,8 @@ extension SessionStream {
 final class LoopbackStream: SessionStream, @unchecked Sendable {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "USBLinkLab.loopback.stream")
-    // Network completion handlers and the following flag are confined to queue.
-    private var eof = false
+    // Preserve terminal status when the final callback also contains readable bytes.
+    private var terminalRead: Result<Data, Error>?
 
     init(_ connection: NWConnection) {
         self.connection = connection
@@ -52,16 +53,17 @@ final class LoopbackStream: SessionStream, @unchecked Sendable {
     func read(upTo count: Int) async throws -> Data {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
-                guard !self.eof else {
-                    continuation.resume(throwing: SessionFault.closed)
+                if let terminal = self.terminalRead {
+                    continuation.resume(with: terminal)
                     return
                 }
                 self.connection.receive(minimumIncompleteLength: 1, maximumLength: count) { bytes, _, last, error in
-                    if last || error != nil { self.eof = true }
+                    if error != nil { self.terminalRead = .failure(SessionFault.closed) }
+                    else if last { self.terminalRead = .success(Data()) }
                     if let bytes, !bytes.isEmpty {
                         continuation.resume(returning: bytes)
                     } else {
-                        continuation.resume(throwing: SessionFault.closed)
+                        continuation.resume(with: self.terminalRead ?? .failure(SessionFault.closed))
                     }
                 }
             }

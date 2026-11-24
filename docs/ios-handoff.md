@@ -36,7 +36,7 @@ The selected Windows path is [Sideloadly](https://sideloadly.io/) over USB. Its 
 1. Connect the iPhone with a data cable, unlock it and complete the [Trust This Computer](https://support.apple.com/en-us/109054) prompts.
 2. Install the vendor-documented Windows prerequisites if absent and confirm the phone appears in the Apple application. Confirm with the device owner before replacing an existing Apple installation.
 3. In Sideloadly select the tethered iPhone, open the unsigned IPA, and start signing/installing. Enter Apple credentials and approval codes in the local signing application.
-4. If prompted, enable **Settings → Privacy & Security → Developer Mode**, restart and confirm with the device passcode. Follow the developer trust prompt if shown. Initial signing or trust may require Internet access.
+4. If prompted, enable **Settings → Privacy & Security → Developer Mode**, restart and confirm with the device passcode. If iOS says Untrusted Developer, connect the phone to the Internet for verification and open **Settings ? General ? VPN & Device Management**. Select the developer entry for the Apple account used to sign and complete the system trust prompt. Test the app launch before disabling the phone's wireless radios for lab measurements.
 5. Launch USBLinkLab with the phone unlocked. Open pairing, generate the application secret at one endpoint and enter it locally at the other. With a free Apple Personal Team, renew provisioning/reinstallation before the seven-day profile expiry.
 
 ## Physical USB acceptance

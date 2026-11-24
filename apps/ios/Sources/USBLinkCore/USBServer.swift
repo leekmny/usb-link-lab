@@ -11,6 +11,7 @@ public actor USBServer {
     var session: LiveSession?
     private var listener: LoopbackListener?
     private var listenerID: UUID?
+    private var pendingReconnect: (stream: SessionStream, deadline: ContinuousClock.Instant, timer: Task<Void, Never>)?
     private var foreground = false
     private var staging = Set<UUID>()
     private var observers: [UUID: AsyncStream<LabSnapshot>.Continuation] = [:]
@@ -29,7 +30,8 @@ public actor USBServer {
         if FileManager.default.fileExists(atPath: url.path) {
             journal = try JSONDecoder().decode(QueueJournal.self, from: Data(contentsOf: url))
         }
-        let committed = try store.loadReceived()
+        var unavailable = Set<UUID>()
+        let committed = try store.loadReceived { unavailable.insert($0) }
         var files: [UUID: URL] = [:]
         for row in committed {
             files[row.id] = row.fileURL
@@ -45,7 +47,8 @@ public actor USBServer {
         }
         for index in journal.entries.indices {
             let entry = journal.entries[index]
-            if entry.direction == .incoming, entry.state == .completed, files[entry.id] == nil {
+            if entry.direction == .incoming, files[entry.id] == nil,
+               entry.state == .completed || unavailable.contains(entry.id) {
                 journal.entries[index].state = .interrupted
                 journal.entries[index].detail = "storage_error"
             }
@@ -68,6 +71,7 @@ public actor USBServer {
         self.receivedFiles = files
         self.secret = secret
         self.usesSystemServices = usesSystemServices
+        if !unavailable.isEmpty { self.status = "storage_error" }
     }
 
     func persist() throws {
@@ -187,9 +191,43 @@ public actor USBServer {
     }
 
     func accept(_ stream: SessionStream, listenerID expected: UUID? = nil) {
-        guard listenerID == expected, foreground, !journal.paused, session == nil,
+        guard listenerID == expected, foreground, !journal.paused,
               let secret, let peer = peerID else { stream.close(); return }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        if let session {
+            guard session.readyEnqueued, session.incoming == nil, session.outgoing == nil,
+                  pendingReconnect == nil else { stream.close(); return }
+            let timer = Task { [weak self] in
+                do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+                await self?.expirePending(stream)
+            }
+            pendingReconnect = (stream, deadline, timer)
+            return
+        }
+        beginSession(stream, secret: secret, peer: peer, deadline: deadline)
+    }
+
+    private func expirePending(_ stream: SessionStream) {
+        guard pendingReconnect?.stream === stream else { return }
+        pendingReconnect = nil
+        stream.close()
+    }
+
+    func finishDrain(_ old: LiveSession) {
+        guard session === old, old.drained else { return }
+        let pending = pendingReconnect
+        pendingReconnect = nil
+        pending?.timer.cancel()
+        disconnect("listening", pause: false)
+        guard let pending else { return }
+        guard foreground, !journal.paused, pending.deadline > .now,
+              let secret, let peer = peerID else { pending.stream.close(); return }
+        beginSession(pending.stream, secret: secret, peer: peer, deadline: pending.deadline)
+    }
+
+    private func beginSession(_ stream: SessionStream, secret: Data, peer: Data, deadline: ContinuousClock.Instant) {
         let generation = LiveSession(stream: stream, peer: peer)
+        generation.handshakeDeadline = deadline
         session = generation
         status = "handshake"
         publish()
@@ -230,6 +268,9 @@ public actor USBServer {
     public func cancelActive() { disconnect("cancelled", pause: true) }
 
     func disconnect(_ reason: String, pause: Bool) {
+        pendingReconnect?.timer.cancel()
+        pendingReconnect?.stream.close()
+        pendingReconnect = nil
         let old = session
         session = nil
         old?.watchdog?.cancel()

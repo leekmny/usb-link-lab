@@ -76,6 +76,40 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(try store.loadReceived().isEmpty)
     }
 
+    func testLaunchRetainsReadableHistoryAlongsideDamagedRecords() async throws {
+        let ids = [UUID(), UUID(), UUID()]
+        let metadata = try ItemMetadata(kind: .file, name: "sample.bin",
+                                        mediaType: "application/octet-stream", size: 1)
+        var urls: [URL] = []
+        for id in ids {
+            let sink = try store.beginIncoming(id, metadata: metadata)
+            try sink.append(Data([42]))
+            urls.append(try sink.commit(mode: .aes256GCM))
+        }
+        // First launch records all three successful receives in the history journal.
+        _ = try USBServer(root: root, secret: nil)
+        try FileManager.default.removeItem(at: urls[1])
+        let damagedRecord = urls[2].deletingLastPathComponent().appendingPathComponent("record.json")
+        let damagedBytes = Data("invalid JSON".utf8)
+        try damagedBytes.write(to: damagedRecord)
+
+        let restored = try USBServer(root: root, secret: nil)
+        let snapshot = await restored.snapshot()
+        XCTAssertEqual(snapshot.records.count, 3)
+        let valid = try XCTUnwrap(snapshot.records.first { $0.id == ids[0] })
+        XCTAssertEqual(valid.state, .completed)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(valid.fileURL)), Data([42]))
+        for id in ids.dropFirst() {
+            let record = try XCTUnwrap(snapshot.records.first { $0.id == id })
+            XCTAssertEqual(record.state, .interrupted)
+            XCTAssertEqual(record.detail, "storage_error")
+            XCTAssertNil(record.fileURL)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: urls[1].deletingLastPathComponent().path))
+        XCTAssertEqual(try Data(contentsOf: damagedRecord), damagedBytes)
+        XCTAssertEqual(try Data(contentsOf: urls[2]), Data([42]))
+    }
+
     func testEmptyTextCommitsAndPublicFixtureIsRejectedViaLiveKeychain() throws {
         let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8", size: 0)
         let sink = try store.beginIncoming(UUID(), metadata: metadata)

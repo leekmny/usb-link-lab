@@ -100,23 +100,30 @@ struct LabStore: Sendable {
         }
     }
 
-    func loadReceived() throws -> [TransferRecord] {
+    func loadReceived(onUnavailable: (UUID) -> Void = { _ in }) throws -> [TransferRecord] {
         let records: [(Date, TransferRecord)] = try Self.children(of: received).compactMap { directory in
             guard let id = UUID(uuidString: directory.lastPathComponent) else { return nil }
             let item = received.appendingPathComponent(id.uuidString, isDirectory: true)
-            let recordURL = item.appendingPathComponent("record.json")
-            let content = item.appendingPathComponent("payload")
-            let recordSize = try Self.regularFileSize(recordURL)
-            guard recordSize <= 8192 else { throw StoreFailure.corruptRecord }
-            let saved = try JSONDecoder().decode(SavedItem.self, from: Data(contentsOf: recordURL))
-            guard saved.id == id, try Self.regularFileSize(content) == saved.metadata.size else {
-                throw StoreFailure.corruptRecord
+            do {
+                let values = try item.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isDirectory == true, values.isSymbolicLink != true else { throw StoreFailure.corruptRecord }
+                let recordURL = item.appendingPathComponent("record.json")
+                let content = item.appendingPathComponent("payload")
+                let recordSize = try Self.regularFileSize(recordURL)
+                guard recordSize <= 8192 else { throw StoreFailure.corruptRecord }
+                let saved = try JSONDecoder().decode(SavedItem.self, from: Data(contentsOf: recordURL))
+                guard saved.id == id, try Self.regularFileSize(content) == saved.metadata.size else {
+                    throw StoreFailure.corruptRecord
+                }
+                let record = TransferRecord(
+                    id: id, direction: .incoming, mode: saved.mode, metadata: saved.metadata,
+                    state: .completed, bytes: saved.metadata.size, detail: "", fileURL: content
+                )
+                return (saved.date, record)
+            } catch {
+                onUnavailable(id)
+                return nil
             }
-            let record = TransferRecord(
-                id: id, direction: .incoming, mode: saved.mode, metadata: saved.metadata,
-                state: .completed, bytes: saved.metadata.size, detail: "", fileURL: content
-            )
-            return (saved.date, record)
         }
         return records.sorted { $0.0 > $1.0 }.map(\.1)
     }

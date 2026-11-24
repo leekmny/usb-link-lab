@@ -8,6 +8,7 @@ import CryptoKit
 private actor BytePipe {
     var bytes = Data()
     var closed = false
+    var reset = false
     var reads = 0
 
     func put(_ data: Data) throws {
@@ -18,7 +19,8 @@ private actor BytePipe {
     func read(_ count: Int) async throws -> Data {
         let deadline = ContinuousClock.now.advanced(by: .seconds(6))
         while bytes.isEmpty {
-            guard !closed else { throw SessionFault.closed }
+            if reset { throw SessionFault.closed }
+            if closed { return Data() }
             guard ContinuousClock.now < deadline else { throw SessionFault.timeout }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -29,6 +31,7 @@ private actor BytePipe {
     }
 
     func finish() { closed = true }
+    func abort() { closed = true; reset = true }
 }
 
 private final class MemoryStream: SessionStream, @unchecked Sendable {
@@ -307,6 +310,67 @@ final class SessionTests: XCTestCase {
         try await c.send(.open, .aes256GCM, Data(repeating: 5, count: 16), WireBody.open(.aes256GCM))
         let result = try await wait(s) { $0.status == "protocol_error" }
         XCTAssertTrue(result.records.isEmpty)
+    }
+
+    func testFirstReconnectWaitsForCleanDrainEOFAndFreshAuthentication() async throws {
+        let s = try await server()
+        let old = try await TestClient(server: s)
+        try await old.send(.drain, .plaintext, TestClient.zero, WireBody.drain(.request))
+        let (_, request) = try await old.next()
+        XCTAssertEqual(try WireBody.decodeDrain(request), .request)
+        let (_, ready) = try await old.next()
+        XCTAssertEqual(try WireBody.decodeDrain(ready), .ready)
+        try await s.enqueueText("fresh session", mode: .chacha20Poly1305)
+        let originalGeneration = await s.session
+
+        let clientInput = BytePipe(), serverInput = BytePipe()
+        let next = MemoryStream(clientInput, serverInput)
+        await s.accept(MemoryStream(serverInput, clientInput))
+        let ch = try Wire.makeClientHello(psk: TestClient.psk, nonce: randomBytes(32))
+        try await next.write(ch)
+        let excessInput = BytePipe()
+        await s.accept(MemoryStream(BytePipe(), excessInput))
+        let rejected = try await excessInput.read(1)
+        XCTAssertTrue(rejected.isEmpty)
+        let waitingGeneration = await s.session
+        XCTAssertTrue(waitingGeneration === originalGeneration)
+        let unconsumed = await serverInput.bytes
+        XCTAssertEqual(unconsumed, ch)
+        let previous = await s.snapshot()
+        XCTAssertEqual(previous.records.first?.state, .queued)
+
+        try await old.send(.drain, .plaintext, TestClient.zero, WireBody.drain(.ready))
+        await old.stream.output.finish() // Until now, EOF was deliberately withheld.
+        let sh = try await next.exact(73)
+        let cf = try Wire.makeClientFinish(clientHello: ch, serverHello: sh, psk: TestClient.psk)
+        let keys = try Wire.sessionKeys(clientHello: ch, serverHello: sh, clientFinish: cf, psk: TestClient.psk)
+        let handshaking = await s.snapshot()
+        XCTAssertFalse(handshaking.connected)
+        XCTAssertEqual(handshaking.records.first?.state, .queued)
+        try await next.write(cf)
+        let fixed = try await next.exact(76)
+        let open = try Wire.decodeHeader(fixed, keys: keys.s2c, expectedSequence: 0)
+        XCTAssertEqual(open.type, .open)
+        XCTAssertEqual(open.mode, .chacha20Poly1305)
+        await s.cancelActive()
+    }
+
+    func testTransportResetAfterDrainReadyDiscardsWaitingReconnect() async throws {
+        let s = try await server()
+        let old = try await TestClient(server: s)
+        try await old.send(.drain, .plaintext, TestClient.zero, WireBody.drain(.request))
+        _ = try await old.next()
+        let (_, ready) = try await old.next()
+        XCTAssertEqual(try WireBody.decodeDrain(ready), .ready)
+        let candidateInput = BytePipe()
+        await s.accept(MemoryStream(BytePipe(), candidateInput))
+        try await old.send(.drain, .plaintext, TestClient.zero, WireBody.drain(.ready))
+        await old.stream.output.abort()
+        let rejected = try await candidateInput.read(1)
+        XCTAssertTrue(rejected.isEmpty)
+        let failed = try await wait(s) { $0.status == "connection_closed" }
+        XCTAssertTrue(failed.paused)
+        XCTAssertFalse(failed.connected)
     }
 
     func testPeerIDs4096And4097() async throws {
