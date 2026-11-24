@@ -14,7 +14,10 @@ Approve Trust This Computer if the iPhone requests it. If the device is attached
 to WSL by usbipd, detach it before trying USBLinkLab. Run the companion iPhone
 app in the foreground and start its listener before connecting from Windows.
 
-Configure an application pairing secret locally on both endpoints. Transmit
+On both updated endpoints, choose app pairing on the selected device. Scan
+the Windows QR in the iPhone app, or choose the six-digit code on both
+devices. Prepare on the iPhone and then start pairing from Windows.
+Invitations expire after two minutes and can be used once. Transmit
 synthetic data first. An Apple USB discovery result confirms a device record.
 A successful socket connection confirms that the selected USB path opened.
 Full verification requires an authenticated session and the physical

@@ -1,0 +1,26 @@
+{
+  "description": "PUBLIC TEST DATA. Framing and derivation only. The samples are not valid native EC J-PAKE shares.",
+  "enrollment_magic_ascii": "ULABP001",
+  "qr": {
+    "psk_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "ascii": "ULABQR1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "must_reject_for_live_pairing": true
+  },
+  "record_hex_in_order": [
+    "554c4142503030310100030001ff",
+    "554c4142503030310200030002ff",
+    "554c4142503030310300030003ff",
+    "554c4142503030310400030004ff"
+  ],
+  "transcript_sha256": "16bb0457d159605a0e2536245a1ef54da857e92663705eece31b4a10432eeac8",
+  "bridge_derived_secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "hkdf_sha256": {
+    "psk": "6b3486251ec8feb02bf07004600e4a39e431975c76498169071c586193b439ac",
+    "client-confirm": "b5c219529f7e5e0969285d9c12c722234d86ad2638fcaf06415ccb9aec3b2449",
+    "server-confirm": "fa953d6bb613bf9b72f5532a3a5d5dde1ee6e074ded40b1c4dbf38b329bdf3d3"
+  },
+  "confirmation_hex": {
+    "C": "6e21e2683a1e3ba0895819c65200465faf427d81d676300b5e33b19494796b4a",
+    "S": "a8d3db86c5722b717242ec15983681ecef748839ce55837439f861aab291ec50"
+  }
+}

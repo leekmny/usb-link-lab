@@ -1,8 +1,9 @@
+import base64
 import secrets
 
 import pytest
 
-from usblinklab.pairing import Pairing, PairingError, PairingStore
+from usblinklab.pairing import Pairing, PairingError, PairingStore, encode_pairing_qr
 
 
 def test_dpapi_round_trip_and_device_scope(tmp_path):
@@ -27,3 +28,10 @@ def test_corrupt_protected_data_is_reported(tmp_path):
     store.path.write_bytes(b"invalid data")
     with pytest.raises(PairingError):
         store.load("fixture-device")
+
+
+def test_optical_invitation_encodes_full_random_key():
+    secret = secrets.token_bytes(32)
+    prefix, payload = encode_pairing_qr(secret).split(":")
+    assert prefix == "ULABQR1" and len(payload) == 43 and "=" not in payload
+    assert base64.urlsafe_b64decode(payload + "=") == secret

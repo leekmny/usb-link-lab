@@ -17,3 +17,14 @@ Windows evidence for ULAB1-20261124-R1. The iPhone implementation can add its ow
 | Clean Windows runner | GitHub Actions windows-2025 | Run Windows build and independent portable-smoke job | Locked tests/build and extracted-bundle smoke on a clean runner | The baseline build and separate portable runtime smoke passed on fresh Windows runner jobs | [GitHub Actions run](https://github.com/leekmny/usb-link-lab/actions/runs/45334863807) | PASS |
 | Python and Swift interoperability | Native Windows and signed iPhone app | Run shared fixtures in Swift and exchange text/image/file both ways in each mode | Matching literal encodings and received bytes | iPhone app was still in development | [Windows handoff](windows-handoff.md) | BLOCKED |
 | Physical USB with wireless disabled | Windows Apple device support and real iPhone | Trust the computer, select a USB record, disable wireless paths, exchange files, pull cable and retry after reconnect | Successful wired exchange, interruption on unplug, no fallback, unchanged retry mode | Windows recognized the cabled device. The ULAB app port reported `listener_refused`. A signed foreground iPhone app is pending | [Windows handoff](windows-handoff.md) | BLOCKED |
+
+## Windows 0.2.0 enrollment update
+
+| Requirement | Environment | Observed result | Status |
+| --- | --- | --- | --- |
+| Default QR and six-digit fallback | Native Qt Windows | Korean light and English dark layouts rendered with public test data. Correct token scoping, leading zeroes, refresh, expiry and cancel passed Qt tests. | PASS |
+| EC J-PAKE and persisted key | Windows x64, Mbed TLS 3.6.7 and two local endpoints | Matching six-digit code produced a fresh shared key and passed ULAB v1 authentication. Wrong code, replayed invite and storage failure were rejected. QR used the existing ULAB handshake. | PASS |
+| Save and reconnect compatibility | Windows DPAPI and local peer | New records are written only after peer authentication. Existing credentials authenticate on a normal reconnect. | PASS |
+| Updated physical iPhone interop | Signed iPhone app implementing PAIRING_V1 required | Use both enrollment methods and reconnect on real USB. | BLOCKED |
+
+See [shared enrollment protocol](../protocol/PAIRING_V1.md) and [iPhone development prompt](IPHONE_PAIRING_UPDATE_PROMPT.md).

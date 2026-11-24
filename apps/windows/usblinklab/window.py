@@ -1,13 +1,18 @@
 """Native desktop conversation, pairing and transfer details."""
 
+from math import ceil
 from pathlib import Path
-import secrets
+from time import monotonic
+from uuid import uuid4
 
-from PySide6.QtCore import QSize, Qt, QSettings
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QIcon, QImageReader, QKeySequence, QPalette, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QSize, Qt, QSettings, QTimer
+from PySide6.QtGui import (
+    QColor, QFont, QFontDatabase, QIcon, QImage, QImageReader, QKeySequence, QPalette,
+    QPainter, QPixmap, QShortcut,
+)
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
+    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -16,6 +21,9 @@ from .icons import glyph, icon
 from .labels import COPY
 from .protocol import Mode
 from .theme import THEMES, stylesheet
+
+
+ACTIVE_CONNECTIONS = {"connecting", "pairing_code_connecting", "connected"}
 
 
 def label(text="", name="", *, wrap=False, size=None):
@@ -40,6 +48,26 @@ def byte_count(value):
             return f"{value:,.1f} {unit}"
 
 
+def pairing_qr_pixmap(payload, pixel_ratio):
+    import segno
+
+    matrix = segno.make_qr(payload, error="M").matrix
+    quiet_zone = 4
+    modules = len(matrix) + 2 * quiet_zone
+    scale = max(1, int(216 * pixel_ratio) // modules)
+    pixels = modules * scale
+    image = QImage(pixels, pixels, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.white)
+    with QPainter(image) as painter:
+        for y, row in enumerate(matrix, quiet_zone):
+            for x, dark in enumerate(row, quiet_zone):
+                if dark:
+                    painter.fillRect(x * scale, y * scale, scale, scale, Qt.GlobalColor.black)
+    pixmap = QPixmap.fromImage(image)
+    pixmap.setDevicePixelRatio(pixel_ratio)
+    return pixmap
+
+
 class Selector(QComboBox):
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -48,6 +76,152 @@ class Selector(QComboBox):
         painter = QPainter(self)
         painter.drawPixmap(self.width() - 23, (self.height() - 13) // 2, pixmap)
         painter.end()
+
+
+class PairingDialog(QDialog):
+    def __init__(self, window, device):
+        super().__init__(window, objectName="pairingDialog")
+        self.device = device
+        self.request_id = None
+        self.method = "qr"
+        self.tr_key = window.tr_key
+        self.submit = window.bridge.submit
+        self._awaiting_result = False
+        self._deadline = 0
+        self.setWindowTitle(self.tr_key("pair"))
+        self.setMinimumWidth(440)
+        body = QVBoxLayout(self)
+        body.setContentsMargins(22, 20, 22, 18)
+        body.setSpacing(12)
+        self.intro = label(wrap=True)
+        body.addWidget(self.intro)
+
+        self.code = label(name="pairingCode")
+        self.code.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.code.setMinimumHeight(66 if window.large else 58)
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        font.setPixelSize(42 if window.large else 36)
+        font.setWeight(QFont.Weight.DemiBold)
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4)
+        self.code.setFont(font)
+        colors = window.colors
+        self.qr = label(name="pairingQr")
+        self.qr.setAccessibleName(self.tr_key("pair_qr_image"))
+        self.qr.setMinimumHeight(232)
+        for display in (self.qr, self.code):
+            display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            display.setStyleSheet(
+                f"background: {colors['surface']}; border: 1px solid {colors['line']}; border-radius: 7px;"
+            )
+            body.addWidget(display)
+        self.status = label(name="muted", wrap=True)
+        body.addWidget(self.status)
+        self.switch = window._button("use_pair_code", self._switch_method, name="quiet")
+        self.switch.setAutoDefault(False)
+        body.addWidget(self.switch, 0, Qt.AlignmentFlag.AlignLeft)
+
+        buttons = QHBoxLayout()
+        self.refresh = window._button("new_pair_qr", self.request_pairing)
+        self.refresh.setAutoDefault(False)
+        cancel = window._button("cancel_pair", self.reject)
+        cancel.setAutoDefault(False)
+        self.start = window._button("start_pair", self._start_pairing, name="primary")
+        self.start.setDefault(True)
+        buttons.addWidget(self.refresh)
+        buttons.addStretch()
+        buttons.addWidget(cancel)
+        buttons.addWidget(self.start)
+        body.addLayout(buttons)
+        cancel.setFocus()
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(250)
+        self._timer.timeout.connect(self._update_countdown)
+        self._render_method()
+
+    @property
+    def request_identity(self):
+        return self.device, self.request_id
+
+    def request_pairing(self):
+        self.clear_pairing()
+        self.request_id = uuid4().hex
+        self._awaiting_result = True
+        self.status.setText(self.tr_key("pairing_code_generating"))
+        self.refresh.setEnabled(False)
+        self.submit(f"new_pair_{self.method}", *self.request_identity)
+
+    def show_pairing(self, topic, value):
+        if (not self._awaiting_result or topic != f"pairing_{self.method}" or
+                (value["device"], value["request_id"]) != self.request_identity):
+            return
+        deadline = value["expires_at"]
+        if deadline <= monotonic():
+            self.show_unavailable("pairing_code_expired")
+            return
+        if self.method == "qr":
+            payload = value["payload"]
+            if not payload.startswith("ULABQR1:"):
+                self.show_unavailable("pairing_code_failed")
+                return
+            try:
+                self.qr.setPixmap(pairing_qr_pixmap(payload, self.devicePixelRatioF()))
+            except (ImportError, ValueError):
+                self.show_unavailable("pairing_code_failed")
+                return
+        else:
+            code = value["code"]
+            if len(code) != 6 or not code.isascii() or not code.isdecimal():
+                self.show_unavailable("pairing_code_failed")
+                return
+            self.code.setText(code)
+        self._awaiting_result = False
+        self._deadline = deadline
+        self.refresh.setEnabled(True)
+        self.start.setEnabled(True)
+        self._timer.start()
+        self._update_countdown()
+
+    def clear_pairing(self):
+        self._awaiting_result = False
+        self._deadline = 0
+        self._timer.stop()
+        self.code.clear()
+        self.qr.clear()
+        self.start.setEnabled(False)
+
+    def show_unavailable(self, reason):
+        self.clear_pairing()
+        self.status.setText(self.tr_key(reason))
+        self.refresh.setEnabled(True)
+
+    def _render_method(self):
+        use_qr = self.method == "qr"
+        self.intro.setText(self.tr_key("pair_qr_intro" if use_qr else "pair_code_intro"))
+        self.qr.setVisible(use_qr)
+        self.code.setVisible(not use_qr)
+        for button, key in ((self.refresh, f"new_pair_{self.method}"),
+                            (self.switch, "use_pair_code" if use_qr else "use_pair_qr")):
+            button.setProperty("copyKey", key)
+            button.setText(self.tr_key(key))
+
+    def _switch_method(self):
+        self.method = "code" if self.method == "qr" else "qr"
+        self._render_method()
+        self.request_pairing()
+        self.adjustSize()
+
+    def _update_countdown(self):
+        remaining = ceil(self._deadline - monotonic())
+        if remaining <= 0:
+            self.show_unavailable("pairing_code_expired")
+        else:
+            self.status.setText(self.tr_key("pairing_code_remaining").format(seconds=remaining))
+
+    def _start_pairing(self):
+        self._update_countdown()
+        if self.start.isEnabled():
+            self.accept()
 
 
 class Window(QMainWindow):
@@ -64,6 +238,8 @@ class Window(QMainWindow):
         self.setAcceptDrops(True)
         self.rows = {}
         self.details_dialog = None
+        self.pairing_dialog = None
+        self.pairing_attempt = None
         self.attachments = []
         self.connection_state = "disconnected"
         self.feedback = ""
@@ -368,7 +544,7 @@ class Window(QMainWindow):
         state = self.connection_state
         if state == "connected":
             tone, caption = "success", "connected"
-        elif state in {"connecting", "scanning", "paired"}:
+        elif state in {"connecting", "pairing_code_connecting", "scanning", "paired"}:
             tone, caption = "primary", state
         elif state in {"disconnected", "select_device", "no_device"}:
             tone, caption = "secondary", "disconnected"
@@ -378,7 +554,7 @@ class Window(QMainWindow):
             tone, caption = "danger", "check_connection"
         self.connection_caption.setText(self.tr_key(caption))
         self.connection_caption.setStyleSheet(f"color: {self.colors[tone]}")
-        show_help = state not in {"connected", "connecting", "scanning", "paired", "disconnected"}
+        show_help = state not in ACTIVE_CONNECTIONS | {"scanning", "paired", "disconnected"}
         self.connection_status.setText(self.tr_key(state) if show_help else "")
         self.connection_status.setVisible(show_help)
         self.diagnostic_text.setText(
@@ -398,10 +574,12 @@ class Window(QMainWindow):
         self.exposure.setVisible(mode is not None)
         tone = "exposure" if mode in (0, 3) else "secondary"
         self.exposure.setStyleSheet(f"color: {self.colors[tone]}; font-size: {self.body_pixels}px")
-        active = self.connection_state in {"connecting", "connected"}
+        active = self.connection_state in ACTIVE_CONNECTIONS
+        pairing = self.pairing_dialog is not None
+        scanning = self.connection_state == "scanning"
         selected = self.devices.currentData() is not None
-        self.devices.setEnabled(not active and self.devices.count() > 1)
-        self.connect.setEnabled(active or selected)
+        self.devices.setEnabled(not (active or pairing or scanning) and self.devices.count() > 1)
+        self.connect.setEnabled(not pairing and (active or (selected and not scanning)))
         connection_label = self.tr_key("disconnect" if active else "connect")
         self.connect.setText(connection_label)
         self.connect.setAccessibleName(connection_label)
@@ -411,8 +589,8 @@ class Window(QMainWindow):
         self.send.setText(send_label)
         self.send.setAccessibleName(send_label)
         self.send.setToolTip(send_label)
-        self.refresh.setEnabled(not active and self.connection_state != "scanning")
-        self.pair.setEnabled(selected and not active)
+        self.refresh.setEnabled(not (active or pairing or scanning))
+        self.pair.setEnabled(selected and not (active or pairing or scanning))
         has_content = bool(self.attachments or self.message.toPlainText())
         self.send.setEnabled(selected and has_content and not self.staging)
         self.message.setReadOnly(self.staging)
@@ -423,7 +601,7 @@ class Window(QMainWindow):
         self.compose_hint.setVisible(self.staging or (has_content and not selected))
 
     def _toggle_connection(self):
-        if self.connection_state in {"connecting", "connected"}:
+        if self.connection_state in ACTIVE_CONNECTIONS:
             self._cancel_session()
         elif self.devices.currentData() is not None:
             self.feedback = ""
@@ -496,47 +674,34 @@ class Window(QMainWindow):
 
     def _pair_dialog(self):
         device = self.devices.currentData()
-        if device is None:
+        if device is None or not self.pair.isEnabled():
             return
-        dialog = QDialog(self)
-        dialog.setWindowTitle(self.tr_key("pair"))
-        dialog.setMinimumWidth(410)
-        body = QVBoxLayout(dialog)
-        body.addWidget(label(self.tr_key("pair_intro"), wrap=True))
-        field = QLineEdit()
-        field.setMaxLength(64)
-        field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setAccessibleName(self.tr_key("pair"))
-        body.addWidget(field)
-        buttons = QHBoxLayout()
-        show = QPushButton(self.tr_key("reveal"))
+        dialog = PairingDialog(self, device)
+        self.pairing_dialog = dialog
+        dialog.finished.connect(self._finish_pair_dialog)
+        self._update_state()
+        dialog.open()
+        dialog.request_pairing()
 
-        def reveal():
-            hidden = field.echoMode() == QLineEdit.EchoMode.Password
-            field.setEchoMode(QLineEdit.EchoMode.Normal if hidden else QLineEdit.EchoMode.Password)
-            show.setText(self.tr_key("hide" if hidden else "reveal"))
+    def _finish_pair_dialog(self, result):
+        dialog = self.pairing_dialog
+        self.pairing_dialog = None
+        dialog.clear_pairing()
+        dialog.deleteLater()
+        if result == QDialog.DialogCode.Accepted:
+            self.pairing_attempt = dialog.request_identity
+            self.connection_state = "pairing_code_connecting"
+            self.feedback = ""
+            self._update_state()
+            self.bridge.submit(f"pair_{dialog.method}", *dialog.request_identity)
+        else:
+            self.bridge.submit("cancel_pair_code", *dialog.request_identity)
+            self._update_state()
 
-        show.clicked.connect(reveal)
-        generate = QPushButton(self.tr_key("generate"))
-
-        def new_secret():
-            field.setText(secrets.token_hex(32))
-            if field.echoMode() == QLineEdit.EchoMode.Password:
-                reveal()
-
-        generate.clicked.connect(new_secret)
-        save = QPushButton(self.tr_key("save_pair"), objectName="primary")
-        save.setEnabled(False)
-        field.textChanged.connect(lambda value: save.setEnabled(
-            len(value) == 64 and all(char in "0123456789abcdefABCDEF" for char in value)
-        ))
-        save.clicked.connect(dialog.accept)
-        for button in (generate, show, save):
-            buttons.addWidget(button)
-        body.addLayout(buttons)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.bridge.submit("pair", device, field.text())
-        field.clear()
+    def closeEvent(self, event):
+        if self.pairing_dialog is not None:
+            self.pairing_dialog.reject()
+        super().closeEvent(event)
 
     def _settings_dialog(self):
         dialog = QDialog(self)
@@ -584,8 +749,22 @@ class Window(QMainWindow):
             index = self.devices.findData(selected)
             self.devices.setCurrentIndex(index if index >= 0 else 0)
             self.devices.blockSignals(False)
+            if self.pairing_dialog is not None and self.devices.findData(self.pairing_dialog.device) < 0:
+                self.pairing_dialog.reject()
         elif topic == "connection":
             self.connection_state = value
+            if value != "pairing_code_connecting":
+                self.pairing_attempt = None
+        elif topic == "pairing_request_error":
+            request = value["device"], value["request_id"]
+            if self.pairing_dialog is not None and request == self.pairing_dialog.request_identity:
+                self.pairing_dialog.show_unavailable(value["reason"])
+            elif request == self.pairing_attempt:
+                self.pairing_attempt = None
+                self.connection_state = value["reason"]
+        elif topic in {"pairing_qr", "pairing_code"}:
+            if self.pairing_dialog is not None:
+                self.pairing_dialog.show_pairing(topic, value)
         elif topic == "item":
             self._set_row(value)
         elif topic == "removed":
@@ -681,7 +860,7 @@ class Window(QMainWindow):
         self.progress.setVisible(event is not None and event["status"] in {"sending", "receiving", "verifying"})
         for widget in (self.preview, self.retry, self.remove, self.export):
             widget.hide()
-        self.cancel.setVisible(self.connection_state in {"connecting", "connected"})
+        self.cancel.setVisible(self.connection_state in ACTIVE_CONNECTIONS)
         if event is None:
             return
         status = event["status"]
@@ -692,7 +871,8 @@ class Window(QMainWindow):
         self.detail_status.setText(f"{self.tr_key(status)}  /  {byte_count(event['size'])}")
         self.progress.setValue(int(1000 * event["transferred"] / max(1, event["size"])))
         self.retry.setVisible(event["direction"] == "outgoing" and status in {"interrupted", "unconfirmed"})
-        self.retry.setEnabled(self.devices.currentData() is not None and self.connection_state not in {"connecting", "connected"})
+        self.retry.setEnabled(self.devices.currentData() is not None and self.pairing_dialog is None and
+                              self.connection_state not in ACTIVE_CONNECTIONS | {"scanning"})
         self.remove.setVisible(event["direction"] == "outgoing" and status in {
             "queued", "paused", "interrupted", "unconfirmed",
         })

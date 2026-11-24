@@ -2,9 +2,11 @@
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from functools import partial
 import json
 import os
+import secrets
 from pathlib import Path
 import shutil
 import tempfile
@@ -14,7 +16,8 @@ import time
 from PySide6.QtCore import QObject, Signal
 
 from . import transport
-from .pairing import Pairing, PairingError, PairingStore, atomic_save
+from .pairing import Pairing, PairingError, PairingStore, atomic_save, encode_pairing_qr
+from .pin_pairing import CODE_TTL, PAIRING_TIMEOUT, PairingBackendError, PairingProtocolError, pair_client
 from .protocol import AuthenticationError, Mode, ProtocolError
 from .session import DrainRequired, Session, SessionCancelled, SessionError
 from .storage import Job, Storage
@@ -38,6 +41,15 @@ class OutboxEntry:
             "text": self.job.text[:480] if self.job.text and self.status == "complete" else self.job.text,
             "binding": self.binding, "status": self.status,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PendingPairing:
+    device: str
+    request_id: str
+    method: str
+    credential: bytes | str = field(repr=False)
+    expires: float
 
 
 class Controller(QObject):
@@ -78,6 +90,8 @@ class Controller(QObject):
         self.admitting = None
         self.disconnect_requested = False
         self.disconnect_epoch = 0
+        self.pending_pairing = None
+        self.pairing_timer = None
         self.pairings = PairingStore(self.root / "pairing.dpapi")
         self.outbox = self.root / "outbox.json"
         self.storage = None
@@ -89,6 +103,7 @@ class Controller(QObject):
             self.changed.emit("error", "storage_failed")
         self._start("discover", ())
         await self.stop.wait()
+        self._clear_pending_pairing()
         if self.connection and not self.connection.done():
             await self._disconnect()
         await asyncio.gather(*self.commands, return_exceptions=True)
@@ -182,18 +197,81 @@ class Controller(QObject):
         self.changed.emit("devices", [(device.stable_id, device.label) for device in devices])
         self.changed.emit("connection", "select_device" if devices else "no_device")
 
-    async def _pair(self, device_id, secret):
-        if self.connection and not self.connection.done() or device_id not in self.devices:
+    async def _new_pair_code(self, device_id, request_id):
+        self._new_pairing(device_id, request_id, "code")
+
+    async def _new_pair_qr(self, device_id, request_id):
+        self._new_pairing(device_id, request_id, "qr")
+
+    def _new_pairing(self, device_id, request_id, method):
+        if self.storage is None:
+            self._pairing_request_error(device_id, request_id, "storage_failed")
             return
-        try:
-            record = Pairing(device_id, bytes.fromhex(secret))
-            if len(secret) != 64:
-                raise PairingError("invalid_secret")
-            self.pairings.save(record)
-        except (ValueError, OSError):
-            self.changed.emit("error", "pairing_store_failed")
+        if self.connection and not self.connection.done():
+            self._pairing_request_error(device_id, request_id, "pairing_busy")
+            return
+        if device_id not in self.devices:
+            self._pairing_request_error(device_id, request_id, "no_device")
+            return
+        self._clear_pending_pairing()
+        credential = f"{secrets.randbelow(1_000_000):06d}" if method == "code" else secrets.token_bytes(32)
+        self.pending_pairing = PendingPairing(device_id, request_id, method, credential, time.monotonic() + CODE_TTL)
+        self.pairing_timer = self.loop.call_later(CODE_TTL, self._expire_pairing, request_id)
+        result = {
+            "device": device_id, "request_id": request_id, "ttl": CODE_TTL,
+            "expires_at": self.pending_pairing.expires,
+        }
+        if method == "code":
+            result["code"] = credential
         else:
-            self.changed.emit("connection", "paired")
+            result["payload"] = encode_pairing_qr(credential)
+        self.changed.emit("pairing_" + method, result)
+
+    def _pairing_request_error(self, device_id, request_id, reason):
+        self.changed.emit("pairing_request_error", {
+            "device": device_id, "request_id": request_id, "reason": reason,
+        })
+
+    def _clear_pending_pairing(self):
+        self.pending_pairing = None
+        if self.pairing_timer is not None:
+            self.pairing_timer.cancel()
+            self.pairing_timer = None
+
+    def _expire_pairing(self, request_id):
+        pending = self.pending_pairing
+        if pending is not None and pending.request_id == request_id:
+            self._clear_pending_pairing()
+            self._pairing_request_error(pending.device, pending.request_id, "pairing_code_expired")
+
+    async def _cancel_pair_code(self, device_id, request_id):
+        pending = self.pending_pairing
+        if pending is not None and (pending.device, pending.request_id) == (device_id, request_id):
+            self._clear_pending_pairing()
+
+    async def _pair_code(self, device_id, request_id):
+        self._begin_pairing(device_id, request_id, "code")
+
+    async def _pair_qr(self, device_id, request_id):
+        self._begin_pairing(device_id, request_id, "qr")
+
+    def _begin_pairing(self, device_id, request_id, method):
+        pending = self.pending_pairing
+        if pending is None or (pending.device, pending.request_id, pending.method) != (device_id, request_id, method):
+            self._pairing_request_error(device_id, request_id, "pairing_code_expired")
+            return
+        self._clear_pending_pairing()
+        if time.monotonic() >= pending.expires:
+            self.changed.emit("connection", "pairing_code_expired")
+            return
+        if self.storage is None or self.connection and not self.connection.done():
+            return
+        device = self.devices.get(device_id)
+        if device is None:
+            self.changed.emit("connection", "no_device")
+            return
+        self.disconnect_requested = False
+        self.connection = asyncio.create_task(self._supervise(device, None, pending=pending))
 
     async def _enqueue(self, device_id, mode, message, files):
         if self.storage is None:
@@ -253,6 +331,7 @@ class Controller(QObject):
             self.changed.emit("connection", "needs_pair")
             return
         self.disconnect_requested = False
+        self._clear_pending_pairing()
         self.connection = asyncio.create_task(self._supervise(device, pairing))
 
     async def _disconnect(self):
@@ -266,20 +345,42 @@ class Controller(QObject):
             connection.cancel()
         await asyncio.gather(connection, return_exceptions=True)
 
-    async def _supervise(self, device, pairing):
+    async def _supervise(self, device, pairing, *, pending=None):
         state = "disconnected"
+        writer = None
         try:
             while not self.disconnect_requested and not self.stop.is_set():
-                self.changed.emit("connection", "connecting")
+                self.changed.emit("connection", "pairing_code_connecting" if pending else "connecting")
                 reader, writer = await self.usb.connect(device)
-                session = Session(reader, writer, pairing.secret, self.storage, self._transfer_event)
+                if pending is not None:
+                    remaining = pending.expires - time.monotonic()
+                    if remaining <= 0:
+                        state = "pairing_code_expired"
+                        break
+                    if pending.method == "code":
+                        secret = await pair_client(reader, writer, pending.credential,
+                                                   timeout=min(remaining, PAIRING_TIMEOUT))
+                    else:
+                        secret = pending.credential
+                    pairing = Pairing(device.stable_id, secret)
+                save = partial(self._save_pairing, pairing) if pending is not None else None
+                session = Session(reader, writer, pairing.secret, self.storage, self._transfer_event,
+                                  on_authenticated=save)
                 self.session = session
+                writer = None  # Session owns the stream from here.
+                pending = None
                 result = await self._run_session(session, pairing.binding)
                 self.session = None
                 if result != "drained" or self.stop.is_set():
                     break
         except transport.TransportError as error:
             state = error.code
+        except PairingBackendError:
+            state = "pairing_unavailable"
+        except PairingProtocolError:
+            state = "pairing_code_failed"
+        except PairingError:
+            state = "pairing_store_failed"
         except AuthenticationError:
             state = "authentication_failed"
         except ProtocolError:
@@ -289,6 +390,12 @@ class Controller(QObject):
         except (SessionError, OSError, ValueError, RuntimeError):
             state = "session_failed"
         finally:
+            if writer is not None:
+                writer.close()
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), 1)
+                except (OSError, TimeoutError):
+                    pass
             self.disconnect_epoch += 1
             changed = False
             for entry in self.items.values():
@@ -304,6 +411,12 @@ class Controller(QObject):
             self.session = None
             self.changed.emit("connection", state)
 
+    def _save_pairing(self, pairing):
+        try:
+            self.pairings.save(pairing)
+        except OSError as error:
+            raise PairingError("Windows could not store the new pairing") from error
+
     async def _run_session(self, session, binding):
         run = asyncio.create_task(session.run())
         ready = asyncio.create_task(session.wait_ready())
@@ -312,7 +425,10 @@ class Controller(QObject):
             await asyncio.wait((run, ready), return_when=asyncio.FIRST_COMPLETED)
             if run.done():
                 return await run
-            await ready
+            try:
+                await ready
+            except SessionError:
+                return await run
             for entry in self.items.values():
                 if entry.status == "paused" and entry.binding == binding:
                     entry.status = "queued"

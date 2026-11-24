@@ -1,9 +1,11 @@
 import os
+from time import monotonic
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton
 
 from usblinklab.protocol import Mode
 from usblinklab.window import Window
@@ -18,6 +20,21 @@ class Bridge(QObject):
 
     def submit(self, name, *args):
         self.commands.append((name, *args))
+
+
+def open_pairing(window):
+    # Exit the dialog's nested event loop if a blocking dialog is used.
+    watchdog = QTimer()
+    watchdog.setSingleShot(True)
+    watchdog.timeout.connect(lambda: window.findChild(QDialog).reject())
+    watchdog.start(0)
+    window.pair.click()
+    watchdog.stop()
+    return window.findChild(QDialog, "pairingDialog")
+
+
+def pairing_button(dialog, key):
+    return next(button for button in dialog.findChildren(QPushButton) if button.property("copyKey") == key)
 
 
 def test_composer_snapshots_both_protection_modes(tmp_path):
@@ -54,3 +71,133 @@ def test_first_run_has_no_seed_messages(tmp_path):
     assert not window.send.isEnabled()
     assert window.empty.isVisible()
     window.close()
+
+
+def test_pairing_defaults_to_qr_and_keeps_payload_out_of_text(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    bridge.changed.emit("devices", [("phone", "iPhone 1")])
+    window.devices.setCurrentIndex(1)
+    dialog = open_pairing(window)
+
+    (command,) = bridge.commands
+    assert command[:2] == ("new_pair_qr", "phone")
+    request_id = command[2]
+    start = pairing_button(dialog, "start_pair")
+    pairing_qr = dialog.findChild(QLabel, "pairingQr")
+    assert pairing_qr.isVisible()
+    assert not dialog.findChild(QLabel, "pairingCode").isVisible()
+    assert not start.isEnabled()
+
+    payload = "ULABQR1:synthetic-qr-fixture"
+    bridge.changed.emit("pairing_qr", {"device": "phone", "payload": payload, "expires_at": monotonic() + 120, "request_id": request_id})
+    assert start.isEnabled()
+    image = pairing_qr.pixmap().toImage()
+    assert not image.isNull()
+    assert image.pixelColor(0, 0).name() == "#ffffff"
+    assert image.pixelColor(image.width() // 5, image.height() // 5).name() == "#000000"
+    assert all(payload not in widget.text() for widget in window.findChildren(QLabel))
+
+    start.click()
+    assert bridge.commands == [command, ("pair_qr", "phone", request_id)]
+    assert pairing_qr.pixmap().isNull()
+    assert not window.pair.isEnabled()
+    bridge.changed.emit("pairing_request_error", {
+        "device": "phone", "request_id": request_id, "reason": "pairing_code_expired",
+    })
+    assert window.pair.isEnabled()
+    window.close()
+    app.processEvents()
+
+
+def test_pairing_displays_only_selected_device_code_and_starts_once(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    bridge.changed.emit("devices", [("phone", "iPhone 1"), ("other", "iPhone 2")])
+    window.devices.setCurrentIndex(1)
+    dialog = open_pairing(window)
+    pairing_button(dialog, "use_pair_code").click()
+
+    initial, command = bridge.commands
+    assert initial[:2] == ("new_pair_qr", "phone")
+    assert command[:2] == ("new_pair_code", "phone")
+    request_id = command[2]
+    code = dialog.findChild(QLabel, "pairingCode")
+    start = pairing_button(dialog, "start_pair")
+    assert not start.isEnabled()
+    bridge.changed.emit("pairing_code", {
+        "device": "other", "code": "123456", "expires_at": monotonic() + 120, "request_id": request_id,
+    })
+    assert not start.isEnabled()
+    bridge.changed.emit("pairing_code", {
+        "device": "phone", "code": "004287", "expires_at": monotonic() + 120, "request_id": request_id,
+    })
+    assert code.text() == "004287"
+    assert not code.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+    assert "004287" not in window.diagnostic_text.text()
+
+    start.click()
+    assert bridge.commands == [initial, command, ("pair_code", "phone", request_id)]
+    assert not dialog.isVisible()
+    assert code.text() == ""
+    assert not window.pair.isEnabled()
+    assert not window.refresh.isEnabled()
+    bridge.changed.emit("connection", "pairing_code_failed")
+    assert window.pair.isEnabled()
+    assert window.connection_status.text() == window.tr_key("pairing_code_failed")
+
+    window.connect.click()
+    assert bridge.commands[-1] == ("connect", "phone")
+    window.close()
+    app.processEvents()
+
+
+def test_pairing_refresh_hides_stale_code_and_escape_cancels(tmp_path):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    bridge.changed.emit("devices", [("phone", "iPhone 1")])
+    window.devices.setCurrentIndex(1)
+    dialog = open_pairing(window)
+    pairing_button(dialog, "use_pair_code").click()
+
+    initial, command = bridge.commands
+    assert command[:2] == ("new_pair_code", "phone")
+    request_id = command[2]
+    code = dialog.findChild(QLabel, "pairingCode")
+    buttons = {button.property("copyKey"): button for button in dialog.findChildren(QPushButton)}
+    previous = {"device": "phone", "code": "089012", "expires_at": monotonic() + 120, "request_id": request_id}
+    bridge.changed.emit("pairing_code", previous)
+    assert buttons["start_pair"].isEnabled()
+    buttons["new_pair_code"].click()
+    first, previous_code, refreshed = bridge.commands
+    assert first == initial
+    assert previous_code == command
+    assert refreshed[:2] == ("new_pair_code", "phone")
+    assert refreshed[2] != request_id
+    assert not buttons["start_pair"].isEnabled()
+    assert "089012" not in code.text()
+    bridge.changed.emit("pairing_code", previous)
+    assert not buttons["start_pair"].isEnabled()
+    bridge.changed.emit("pairing_request_error", {
+        "device": "phone", "request_id": request_id, "reason": "pairing_code_expired",
+    })
+    bridge.changed.emit("pairing_code", {**previous, "code": "034567", "request_id": refreshed[2]})
+    assert code.text() == "034567"
+    bridge.changed.emit("pairing_request_error", {
+        "device": "phone", "request_id": refreshed[2], "reason": "pairing_code_expired",
+    })
+    assert not buttons["start_pair"].isEnabled()
+    assert buttons["new_pair_code"].isEnabled()
+    assert "034567" not in code.text()
+
+    QTest.keyClick(dialog, Qt.Key.Key_Escape)
+    assert bridge.commands[-1] == ("cancel_pair_code", "phone", refreshed[2])
+    assert not dialog.isVisible()
+    window.close()
+    app.processEvents()

@@ -1,5 +1,6 @@
 """Device-bound pairing records protected by current-user Windows DPAPI."""
 
+import base64
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass, field
@@ -13,6 +14,14 @@ import tempfile
 
 class PairingError(ValueError):
     pass
+
+
+
+def encode_pairing_qr(secret: bytes) -> str:
+    """Encode the full provisioned key with a strict, non-link QR marker."""
+    if len(secret) != 32:
+        raise PairingError("invalid_secret")
+    return "ULABQR1:" + base64.urlsafe_b64encode(secret).rstrip(b"=").decode("ascii")
 
 
 @dataclass(frozen=True)

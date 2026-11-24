@@ -2,9 +2,14 @@
 from pathlib import Path, PurePosixPath
 
 app_dir = Path(SPECPATH)
+native_pairing = app_dir / "usblinklab" / "_native" / "ulab_pairing.dll"
+if not native_pairing.is_file():
+    raise SystemExit("Run windows.ps1 pairing-native before packaging.")
+
 analysis = Analysis(
     [str(app_dir / "launch.py")],
     pathex=[str(app_dir)],
+    binaries=[(str(native_pairing), "usblinklab/_native")],
     excludes=["tkinter", "PySide6.QtQml", "PySide6.QtQuick"],
     optimize=0,
     module_collection_mode={"PySide6": "py", "shiboken6": "py"},

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet("setup", "run", "probe", "test", "package", "smoke")]
+    [ValidateSet("setup", "run", "probe", "test", "package", "smoke", "pairing-native")]
     [string] $Action,
     [string] $Archive,
     [string] $ConnectAlias,
@@ -15,6 +15,7 @@ $Venv = Join-Path $PSScriptRoot ".venv"
 $Python = Join-Path $Venv "Scripts/python.exe"
 $Release = Join-Path $PSScriptRoot "dist/release"
 $ZipName = "USBLinkLab-windows-x64.zip"
+$NativePairing = Join-Path $PSScriptRoot "usblinklab/_native/ulab_pairing.dll"
 
 function Assert-NativeSuccess([string] $Step) {
     if ($LASTEXITCODE -ne 0) { throw "$Step exited with code $LASTEXITCODE." }
@@ -23,6 +24,50 @@ function Assert-NativeSuccess([string] $Step) {
 function New-WorkDirectory {
     $directory = Join-Path ([IO.Path]::GetTempPath()) ("USBLinkLab-" + [guid]::NewGuid())
     return [IO.Directory]::CreateDirectory($directory).FullName
+}
+
+function Build-PairingNative {
+    Get-Command uv -ErrorAction Stop | Out-Null
+    $Source = Join-Path $Project "native/usb_pairing"
+    $Mingw = $env:ULAB_MINGW_BIN
+    if (-not $Mingw) {
+        $Gcc = Get-Command gcc.exe -CommandType Application -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($Gcc) {
+            $Mingw = Split-Path $Gcc.Source -Parent
+        } elseif ($env:SystemDrive) {
+            $MsysUcrt = Join-Path "$($env:SystemDrive)/" "msys64/ucrt64/bin"
+            if (Test-Path -LiteralPath (Join-Path $MsysUcrt "gcc.exe") -PathType Leaf) {
+                $Mingw = $MsysUcrt
+            }
+        }
+    }
+
+    $Tools = @("--from", "cmake==3.31.10")
+    $Compiler = "msvc"
+    $Configure = @("-G", "Visual Studio 17 2022", "-A", "x64")
+    $OriginalPath = $env:Path
+    try {
+        if ($Mingw) {
+            $Gcc = (Resolve-Path -LiteralPath (Join-Path $Mingw "gcc.exe")).Path
+            $Target = & $Gcc -dumpmachine
+            Assert-NativeSuccess "MinGW compiler check"
+            if ($Target -ne "x86_64-w64-mingw32") { throw "MinGW GCC must target x64 Windows." }
+            $env:Path = "$Mingw;$env:Path"
+            $Tools += @("--with", "ninja==1.13.0")
+            $Compiler = "mingw"
+            $Configure = @("-G", "Ninja", "-DCMAKE_C_COMPILER=$Gcc", "-DCMAKE_BUILD_TYPE=Release")
+        }
+
+        $Build = Join-Path $Project ".build/usb-pairing-windows-x64-$Compiler"
+        uv tool run @Tools cmake -S $Source -B $Build @Configure
+        Assert-NativeSuccess "Pairing native configuration"
+        uv tool run @Tools cmake --build $Build --config Release --target ulab_pairing --parallel 4
+        Assert-NativeSuccess "Pairing native build"
+        Copy-Item -LiteralPath (Join-Path $Build "bin/Release/ulab_pairing.dll") -Destination $NativePairing -Force
+    } finally {
+        $env:Path = $OriginalPath
+    }
 }
 
 if ($Action -eq "smoke") {
@@ -69,8 +114,8 @@ if ($Action -eq "smoke") {
         $Smoke = Get-Content -Raw -LiteralPath $Marker | ConvertFrom-Json
         if ($Smoke.app -ne "USBLinkLab" -or $Smoke.status -ne "passed" -or
                 $Smoke.frozen -ne $true -or $Smoke.platform -ne "windows" -or
-                $Smoke.protocol -ne "ULAB1-20261124-R1") {
-            throw "The portable app did not report a frozen Windows Qt startup against the canonical protocol."
+                $Smoke.protocol -ne "ULAB1-20261124-R1" -or $Smoke.pairing_backend -ne "mbedtls-ecjpake") {
+            throw "The portable app did not verify Windows Qt, the canonical protocol, and native pairing."
         }
         Write-Output "Native portable application smoke test passed."
         Get-Content -LiteralPath $Marker
@@ -84,6 +129,12 @@ if ($Action -eq "smoke") {
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT -or
         $env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
     throw "Run this workflow on native Windows x64 using x64 PowerShell."
+}
+
+if ($Action -eq "pairing-native") {
+    Build-PairingNative
+    Write-Output $NativePairing
+    return
 }
 
 if ($Action -eq "setup") {
@@ -109,6 +160,7 @@ if ($Action -eq "setup") {
     Assert-NativeSuccess "Locked wheel installation"
     uv pip check --python $Python
     Assert-NativeSuccess "Wheel compatibility check"
+    Build-PairingNative
     return
 }
 
@@ -125,10 +177,12 @@ switch ($Action) {
         exit $LASTEXITCODE
     }
     "test" {
+        Build-PairingNative
         & $Python -m pytest (Join-Path $PSScriptRoot "tests") -q
         Assert-NativeSuccess "Windows tests"
     }
     "package" {
+        Build-PairingNative
         $Commit = git -C $Project rev-parse HEAD
         Assert-NativeSuccess "Source revision check"
         $InitialChanges = @(git -C $Project status --porcelain --untracked-files=normal)

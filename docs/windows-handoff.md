@@ -10,7 +10,7 @@
 
 The app opens the Apple Mobile Device Service IPv4 loopback socket at fixed port 27015. It verifies the server socket owner against the Windows service PID, exchanges bounded usbmux property lists, retains devices explicitly marked USB, and rechecks the chosen device before requesting device port 43123. The socket becomes the ULAB stream after the service accepts the request. There is no externally configured host or separate local listener. The in-process client follows the libusbmuxd 2.1.1 wire reference and avoids distributing Apple DLLs or requiring an additional forwarder process. The running Apple service returned one eligible USB device with the iPhone cabled. The port 43123 probe returned `listener_refused`; the physical application stream remains unverified.
 
-The iPhone needs an unlocked, trusted, development-signed foreground application listening on IPv4 loopback port 43123. Windows starts CH on the connected stream. Set the same random 32-byte application pairing key through both apps. Apple computer trust and application pairing are separate steps.
+The iPhone needs an unlocked, trusted, development-signed foreground application listening on IPv4 loopback port 43123. For QR enrollment, Windows starts CH with the scanned candidate. For six-digit enrollment, Windows and iPhone first perform EC J-PAKE and derive a 32-byte candidate. See the [pairing extension](../protocol/PAIRING_V1.md) and [iPhone agent prompt](IPHONE_PAIRING_UPDATE_PROMPT.md). Existing saved PSKs still support normal CH reconnect. Apple computer trust and application pairing are separate steps.
 
 ## Build and conformance
 

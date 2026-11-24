@@ -121,6 +121,7 @@ class Session:
         callback: Callable[[TransferEvent], None],
         *,
         client: bool = True,
+        on_authenticated: Callable[[], None] | None = None,
     ):
         self.reader = reader
         self.writer = writer
@@ -130,6 +131,7 @@ class Session:
         self.storage = storage
         self.callback = callback
         self.client = client
+        self._on_authenticated = on_authenticated
         self.generation = uuid4().hex
 
         self._write_lock = asyncio.Lock()
@@ -166,6 +168,9 @@ class Session:
             self._out_keys, self._in_keys = await handshake(
                 self.reader, self.writer, self._psk, client=self.client
             )
+            if self._on_authenticated is not None:
+                self._on_authenticated()
+                self._on_authenticated = None
             self._ready.set()
             read_task = asyncio.create_task(self._read_loop())
             watch_task = asyncio.create_task(self._watch_activity())

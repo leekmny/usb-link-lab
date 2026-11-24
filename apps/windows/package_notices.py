@@ -10,7 +10,7 @@ from pathlib import Path
 from cryptography.hazmat.bindings.openssl.binding import Binding
 
 
-_PACKAGES = ("cffi", "cryptography", "PySide6-Essentials", "shiboken6", "PyInstaller")
+_PACKAGES = ("cffi", "cryptography", "PySide6-Essentials", "shiboken6", "PyInstaller", "segno")
 
 
 def main(bundle: Path) -> None:

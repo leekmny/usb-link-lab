@@ -1,0 +1,4 @@
+module ULABPairing {
+    header "ulab_pairing.h"
+    export *
+}
