@@ -18,6 +18,11 @@ struct PairingScreen: View {
     @State private var preparation: Task<Void, Never>?
     @State private var prepareFailed = false
 
+    private var pairingInProgress: Bool {
+        preparation != nil || model.connection.pairingStatus == .ready
+            || model.connection.pairingStatus == .connecting
+    }
+
     private var codeInvitation: PairingInvitation? { try? .sixDigitCode(code) }
 
     var body: some View {
@@ -37,7 +42,15 @@ struct PairingScreen: View {
                         Button(language.text(.back)) { clearDraft() }
                     } else {
                         Button(language.text(model.connection.pairingStatus == .paired ? .done : .dismiss)) {
-                            dismiss()
+                            if pairingInProgress {
+                                clearDraft()
+                                Task {
+                                    await model.cancelPairing()
+                                    dismiss()
+                                }
+                            } else {
+                                dismiss()
+                            }
                         }
                     }
                 }
@@ -47,6 +60,7 @@ struct PairingScreen: View {
             }
         }
         .modifier(LabPrivacyCover())
+        .interactiveDismissDisabled(pairingInProgress)
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { clearDraft(cancelCameraRequest: phase == .background) }
         }

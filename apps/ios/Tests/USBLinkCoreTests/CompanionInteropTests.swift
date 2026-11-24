@@ -114,6 +114,7 @@ final class CompanionInteropTests: XCTestCase {
             .appendingPathComponent("scripts/test-windows-companion.py")
         var childEnvironment = environment
         childEnvironment["ULAB_WINDOWS_SOURCE"] = URL(fileURLWithPath: source, isDirectory: true).standardizedFileURL.path
+        childEnvironment["ULAB_TEST_ENROLLMENT"] = enrollment
         childEnvironment["ULAB_TEST_PSK"] = secret.map { String(format: "%02x", $0) }.joined()
         childEnvironment["PYTHONDONTWRITEBYTECODE"] = "1"
 

@@ -310,6 +310,7 @@ final class SessionTests: XCTestCase {
         let finished = await s.snapshot()
         XCTAssertEqual(finished.pairingStatus, .idle)
         XCTAssertFalse(finished.paired)
+        XCTAssertFalse(finished.paused)
     }
 
     func testReplacedOrCancelledConsumedSessionCannotCommitLateFinish() async throws {

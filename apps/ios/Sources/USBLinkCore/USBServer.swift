@@ -151,7 +151,7 @@ public actor USBServer {
     }
 
     private var hasWork: Bool {
-        session != nil || !staging.isEmpty || journal.entries.contains { $0.state == .queued }
+        session?.keys != nil || !staging.isEmpty || journal.entries.contains { $0.state == .queued }
     }
 
     public func setForeground(_ active: Bool) {
@@ -179,6 +179,7 @@ public actor USBServer {
     }
 
     public func preparePairing(_ invitation: PairingInvitation) throws {
+        try Task.checkCancellation()
         guard foreground else { throw SessionFault.invalidState }
         try invitation.validate()
         clearInvitation()
