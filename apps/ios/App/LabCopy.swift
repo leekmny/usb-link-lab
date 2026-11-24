@@ -26,7 +26,7 @@ enum LabLanguage: String, CaseIterable, Identifiable {
 enum LabCopy {
     case workbench, history, settings
     case synthetic, connection, unpaired, starting, waiting, linked, reconnecting, paused, unavailable
-    case setupLink, hostInstruction, linkedInstruction, pausedInstruction, resumeQueue, port, offlineTitle
+    case setupLink, firstPairingInstruction, hostInstruction, linkedInstruction, pausedInstruction, resumeQueue, port, offlineTitle
     case compose, draftHint, draftPlaceholder, textLimit, protection, photo, file, addToQueue
     case plaintextExposure, authenticatedExposure, encryptedExposure, confidentiality, authenticity, yes, no
     case attachmentConfirm, selectedPhoto, selectedFile, exactBytes, sourceUnavailable, sourceTooLarge, sourcePhotoFormat
@@ -35,10 +35,13 @@ enum LabCopy {
     case queued, sending, receiving, delivered, checked, interrupted, unconfirmed
     case details, transferred, total, progressBytes, status, fileName, mediaType, origin, summary, acknowledgePending, completeLocal, completePlaintext, completeRemote
     case stopSession, stopDescription, keepGoing, remove, retry, retryTitle, retryDescription, duplicateWarning, retryQueued
-    case openPairing, pairing, pairingExplanation, enterSecret, generateSecret, secretPlaceholder, secretValidation
-    case generatedSecret, generatedHelp, savePairing, copySecret, copied, forgetPairing, forgetDescription, replaceDescription
+    case pairing, pairingExplanation, scanWindowsQR, enterPairingCode, showWindowsQR, invalidPairingQR
+    case cameraDenied, cameraUnavailable, enterWindowsCode, pairingCodeField, invalidPairingCode
+    case preparePairing, preparingPairing, qrRecognized, pairingReady, startWindowsPairing, pairingTimeRemaining
+    case pairingConnecting, pairingExpired, pairingExpiredHelp, pairingCompleted, pairingCompletedHelp
+    case pairingAttemptFailed, pairingTryAgain, cancelPairing, forgetPairing, forgetDescription, forgetPairingFailed
     case language, appearance, system, light, dark, diagnostics, revision, localStorage, testOnly, testMode
-    case connectionScope, listenerFailed, protocolFailed, timeout, disconnected, background, storage, pairFailed, operationFailed
+    case connectionScope, listenerFailed, protocolFailed, timeout, disconnected, background, storage, operationFailed
     case queueFailed, queueFull, mustPair, resumeFailed, exportFailed, queueBusy, pairedState, queuePaused, queueRunning, handshake
     case preview, previewUnavailable, previewLabel, saveFiles, share, saved, savedFiles, retryNotice, detailsUnknown, pairingMismatch, draining
 
@@ -57,6 +60,7 @@ enum LabCopy {
         case .paused: ("대기열 일시 정지", "Queue paused")
         case .unavailable: ("연결 문제", "Connection issue")
         case .setupLink: ("페어링 설정", "Set up pairing")
+        case .firstPairingInstruction: ("Windows 앱에서 페어링 초대를 만든 다음 이 iPhone에서 준비하세요.", "Create a pairing invitation in the Windows app, then prepare it on this iPhone.")
         case .hostInstruction: ("iPhone을 잠금 해제한 상태로 이 앱을 열어 두세요. Windows에서 USB 기기를 선택하고 연결하세요.", "Keep this app open on your unlocked iPhone. Select the USB device and connect from Windows.")
         case .linkedInstruction: ("Windows 앱과 인증된 세션이 열려 있습니다.", "An authenticated session with the Windows app is open.")
         case .pausedInstruction: ("새 세션에서 대기 중인 항목을 보내려면 대기열을 재개하세요.", "Resume the queue to send waiting items in a new session.")
@@ -130,21 +134,34 @@ enum LabCopy {
         case .retryDescription: ("보호 방식과 내용을 유지해 새로 인증한 세션에서 처음부터 보냅니다.", "Sends from the beginning in a fresh authenticated session with the same protection and content.")
         case .duplicateWarning: ("상대가 이미 저장했을 수 있습니다. 다시 보내면 중복 항목이 생길 수 있습니다.", "The peer may have saved this item. Retrying can create a duplicate.")
         case .retryQueued: ("다시 보낼 항목을 대기열에 추가했습니다.", "The item was queued to send again.")
-        case .openPairing: ("앱 페어링", "App pairing")
         case .pairing: ("앱 페어링", "App pairing")
-        case .pairingExplanation: ("두 앱에서 동일한 32바이트 비밀 키를 사용합니다. 이 키는 iPhone의 ‘이 컴퓨터를 신뢰하겠습니까?’ 설정과 별개입니다.", "Use the same 32-byte secret in both apps. App pairing is separate from the iPhone’s Trust This Computer setting.")
-        case .enterSecret: ("Windows에서 생성한 키 입력", "Enter a key generated on Windows")
-        case .generateSecret: ("새 키 생성", "Generate a key")
-        case .secretPlaceholder: ("64자리 16진수", "64 hexadecimal digits")
-        case .secretValidation: ("0–9 또는 A–F로 된 64자리를 입력하세요.", "Enter 64 characters containing only 0–9 or A–F.")
-        case .generatedSecret: ("생성한 키", "Generated key")
-        case .generatedHelp: ("이 키를 Windows 앱의 페어링 화면에 직접 입력하세요. 화면을 닫으면 생성한 키를 다시 표시하지 않습니다.", "Enter this key directly in the Windows app’s pairing screen. Closing this screen hides the generated key.")
-        case .savePairing: ("페어링 키 저장", "Save pairing key")
-        case .copySecret: ("이 iPhone에서 복사", "Copy on this iPhone")
-        case .copied: ("복사됨", "Copied")
+        case .pairingExplanation: ("USB로 연결한 Windows PC에서 USBLinkLab의 페어링 화면을 열어 주세요.", "Connect your iPhone by USB and open the USBLinkLab pairing screen on your Windows PC.")
+        case .scanWindowsQR: ("Windows QR 스캔", "Scan Windows QR")
+        case .enterPairingCode: ("6자리 코드 입력", "Enter six-digit code")
+        case .showWindowsQR: ("Windows 앱에 표시된 QR 코드를 카메라에 비춰 주세요.", "Point the camera at the QR code displayed in the Windows app.")
+        case .invalidPairingQR: ("이 QR 코드를 사용할 수 없습니다. Windows 앱에서 새 QR 코드를 만들어 스캔하세요.", "This QR code cannot be used. Generate a new QR code in the Windows app and scan it.")
+        case .cameraDenied: ("카메라 접근이 허용되지 않았습니다. Windows 앱에 표시된 6자리 코드를 입력하세요.", "Camera access is off. Enter the six-digit code shown in the Windows app.")
+        case .cameraUnavailable: ("카메라를 사용할 수 없습니다. Windows 앱에 표시된 6자리 코드를 입력하세요.", "The camera is unavailable. Enter the six-digit code shown in the Windows app.")
+        case .enterWindowsCode: ("Windows 앱에 표시된 6자리 코드를 첫 자리의 0도 빼지 말고 그대로 입력하세요.", "Enter the six digits from the Windows app, including any leading zeros.")
+        case .pairingCodeField: ("6자리 코드", "Six-digit code")
+        case .invalidPairingCode: ("숫자 0–9로 정확히 6자리를 입력하세요.", "Enter exactly six digits from 0 to 9.")
+        case .preparePairing: ("준비", "Prepare")
+        case .preparingPairing: ("페어링 준비 중", "Preparing pairing")
+        case .qrRecognized: ("QR 코드를 읽었습니다", "QR code scanned")
+        case .pairingReady: ("페어링 준비 완료", "Ready to pair")
+        case .startWindowsPairing: ("이 화면을 열어 둔 채 Windows 앱에서 ‘페어링 시작’을 선택하세요.", "Keep this screen open and choose Start pairing in the Windows app.")
+        case .pairingTimeRemaining: ("%d초 남음", "%d seconds remaining")
+        case .pairingConnecting: ("Windows와 페어링 중", "Pairing with Windows")
+        case .pairingExpired: ("초대가 만료되었습니다", "Invitation expired")
+        case .pairingExpiredHelp: ("Windows 앱에서 새 초대를 만든 뒤 다시 준비하세요.", "Generate a new invitation in the Windows app and prepare again.")
+        case .pairingCompleted: ("페어링 완료", "Pairing complete")
+        case .pairingCompletedHelp: ("이제 이 Windows 앱과 USB로 다시 연결할 수 있습니다.", "You can now reconnect to this Windows app over USB.")
+        case .pairingAttemptFailed: ("페어링에 실패했습니다", "Pairing failed")
+        case .pairingTryAgain: ("USB 연결을 확인하고 Windows 앱에서 새 초대를 만들어 다시 시도하세요.", "Check the USB connection and generate a new invitation in the Windows app before trying again.")
+        case .cancelPairing: ("페어링 취소", "Cancel pairing")
         case .forgetPairing: ("페어링 키 삭제", "Forget pairing key")
-        case .forgetDescription: ("현재 세션이 닫힙니다. 이전 키에 연결된 대기 항목을 다시 보내려면 두 앱에 같은 키를 설정하세요.", "The current session closes. Set the same key in both apps to send items bound to that key again.")
-        case .replaceDescription: ("현재 세션이 닫힙니다. 기존 키의 대기 항목을 새 키로 보내려면 해당 항목을 제거하고 다시 추가하세요.", "The current session closes. Remove and add jobs again to send items bound to the previous key with a new key.")
+        case .forgetDescription: ("현재 세션이 닫힙니다. 새 페어링 후 이전 키에 연결된 항목을 보내려면 대기열에 다시 추가하세요.", "The current session closes. After pairing again, add any items bound to the old key to the queue again.")
+        case .forgetPairingFailed: ("페어링 키를 삭제할 수 없습니다. iPhone을 잠금 해제하고 다시 시도하세요.", "The pairing key could not be removed. Unlock your iPhone and try again.")
         case .language: ("언어", "Language")
         case .appearance: ("테마", "Appearance")
         case .system: ("시스템 설정", "System")
@@ -162,7 +179,6 @@ enum LabCopy {
         case .disconnected: ("연결이 종료되었습니다. Windows에서 기기와 케이블을 확인하고 다시 연결하세요.", "The connection closed. Check the device and cable in Windows, then reconnect.")
         case .background: ("앱이 활성 상태를 벗어나 세션이 종료되었습니다. 두 앱을 열고 Windows에서 다시 연결하세요.", "The app became inactive and the session closed. Open both apps and reconnect from Windows.")
         case .storage: ("기기에 파일을 보관할 수 없습니다. 저장 공간과 파일 접근 가능 여부를 확인하세요.", "The item could not be stored on this device. Check available space and access to the source file.")
-        case .pairFailed: ("페어링 키를 저장할 수 없습니다. iPhone을 잠금 해제하고 다시 시도하세요.", "The pairing key could not be saved. Unlock your iPhone and try again.")
         case .operationFailed: ("요청을 처리할 수 없습니다. 항목 상태를 확인하고 다시 시도하세요.", "The action failed. Check the item status and try again.")
         case .queueFailed: ("대기열에 추가할 수 없습니다. 페어링과 대기열, 기기 저장 공간을 확인하세요.", "The item could not be queued. Check pairing, queue capacity, and device storage.")
         case .queueFull: ("대기열이 가득 찼습니다. 전송을 기다리거나 대기 중인 항목을 제거하세요.", "The queue is full. Wait for a transfer or remove a queued item.")

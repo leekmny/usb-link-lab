@@ -5,10 +5,11 @@
 - Common baseline: [78f451cd2a0e992defc4bd27af212f3ab538747f](https://github.com/leekmny/usb-link-lab/commit/78f451cd2a0e992defc4bd27af212f3ab538747f)
 - Contract: `ULAB1-20261124-R1`; SHA-256 `535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f`
 - App bundle ID: `org.usblinklab.ios`; deployment target: iOS 17; device architecture: arm64
-- Source: `apps/ios/USBLinkLab.xcodeproj`, `App.xcconfig`, and local `USBLinkCore` Swift package. The app and core use Apple platform frameworks with zero external Swift packages.
+- Source: `apps/ios/USBLinkLab.xcodeproj`, `App.xcconfig`, and local `USBLinkCore` Swift package. The app and core use Apple frameworks and the local, static ULABPairing XCFramework built from pinned Mbed TLS.
 - Latest unsigned build [iPhone 0.1.1](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.1) from `6cd05258b9922d90a6f7ff49cf671208d5f8db0c`.
 - Release IPA SHA-256 `07d254ec8b24ac0058d3b75fc88a79e094682a636009def148203a852014cdb8`.
 - Physical signing and launch used [iPhone 0.1.0](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.0) from `088a335389a33429d14eccce229ed390d1572d1b`. Both versions use the same ULAB contract.
+- QR and six-digit setup [USB pairing for iPhone](ios-pairing.md).
 - Evidence: [verification matrix](ios-verification-matrix.md) and [iPhone workflow](https://github.com/leekmny/usb-link-lab/actions/workflows/ios.yml)
 
 ## Build and verify
@@ -23,6 +24,7 @@ python tools/fixtures/generate_ulab1.py --check
 On macOS, use Xcode 16.4 for core and device builds and Xcode 26.3 with iOS 26.2 for simulator tests:
 
 ~~~sh
+bash apps/ios/scripts/build-pairing-native.sh
 swift test --package-path apps/ios
 xcodebuild -project apps/ios/USBLinkLab.xcodeproj -scheme USBLinkLab \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max,OS=26.2' test
@@ -39,7 +41,7 @@ The selected Windows path is [Sideloadly](https://sideloadly.io/) over USB. Its 
 2. Install the vendor-documented Windows prerequisites if absent and confirm the phone appears in the Apple application. Confirm with the device owner before replacing an existing Apple installation.
 3. In Sideloadly select the tethered iPhone, open the unsigned IPA, and start signing/installing. Enter Apple credentials and approval codes in the local signing application.
 4. If prompted, enable **Settings → Privacy & Security → Developer Mode**, restart and confirm with the device passcode. If iOS says Untrusted Developer, connect the phone to the Internet for verification and open **Settings ? General ? VPN & Device Management**. Select the developer entry for the Apple account used to sign and complete the system trust prompt. Test the app launch before disabling the phone's wireless radios for lab measurements.
-5. Launch USBLinkLab with the phone unlocked. Open pairing, generate the application secret at one endpoint and enter it locally at the other. With a free Apple Personal Team, renew provisioning/reinstallation before the seven-day profile expiry.
+5. Launch USBLinkLab with the phone unlocked. Open pairing on both endpoints and follow the QR or six-digit registration steps. With a free Apple Personal Team, renew provisioning/reinstallation before the seven-day profile expiry.
 
 ## Physical USB acceptance
 

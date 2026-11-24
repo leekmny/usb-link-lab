@@ -64,6 +64,7 @@ jobs:
           fi
           git -C "$windows" rev-parse HEAD
           ULAB_WINDOWS_SOURCE="$windows/apps/windows" ULAB_PYTHON="$(command -v python)" \
+            ULAB_NATIVE_TEST_LIBRARY="$GITHUB_WORKSPACE/apps/ios/Generated/libulab_pairing_test.dylib" \
             swift test --package-path apps/ios --filter CompanionInteropTests
 
   device:

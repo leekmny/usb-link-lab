@@ -51,6 +51,49 @@ final class CompanionInteropTests: XCTestCase {
         await server.setForeground(false)
     }
 
+
+    func testWindowsQREnrollmentPINCryptoAndSavedKeyReconnect() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let source = env["ULAB_WINDOWS_SOURCE"], !source.isEmpty,
+              env["ULAB_NATIVE_TEST_LIBRARY"] != nil else {
+            throw XCTSkip("Set ULAB_WINDOWS_SOURCE and ULAB_NATIVE_TEST_LIBRARY for native enrollment conformance")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let credentials = CapturedCredentials()
+        let server = try USBServer(root: root.appendingPathComponent("server"), secret: nil,
+                                  usesSystemServices: true, storeSecret: { credentials.save($0) })
+        await server.setForeground(true)
+        do {
+            let qr = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+            let encoded = qr.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            try await server.preparePairing(PairingInvitation.scanQR("ULABQR1:" + encoded))
+            try await waitForListener(server)
+            try await runPython(root: root, source: source, secret: qr, environment: env, enrollment: "qr")
+            XCTAssertEqual(credentials.count, 1)
+            XCTAssertTrue(credentials.matchesLast(qr))
+
+            let publicTestCode = "004271"
+            try await server.preparePairing(PairingInvitation.sixDigitCode(publicTestCode))
+            try await waitForListener(server)
+            var pinEnvironment = env
+            pinEnvironment["ULAB_TEST_PIN"] = publicTestCode
+            try await runPython(root: root, source: source, secret: Data(), environment: pinEnvironment, enrollment: "pin")
+            XCTAssertEqual(credentials.count, 2)
+            XCTAssertFalse(credentials.matchesLast(qr))
+            let snapshot = await server.snapshot()
+            XCTAssertTrue(snapshot.paired)
+            XCTAssertEqual(snapshot.records.filter { $0.direction == .incoming && $0.state == .completed }.count, 4)
+        } catch {
+            await server.setForeground(false)
+            throw error
+        }
+        await server.setForeground(false)
+    }
+
     private func waitForListener(_ server: USBServer) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while ContinuousClock.now < deadline {
@@ -63,7 +106,9 @@ final class CompanionInteropTests: XCTestCase {
         throw CompanionFailure("Swift loopback listener did not become ready: \(status)")
     }
 
-    private func runPython(root: URL, source: String, secret: Data, environment: [String: String]) async throws {
+    private func runPython(
+        root: URL, source: String, secret: Data, environment: [String: String], enrollment: String? = nil
+    ) async throws {
         let script = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("scripts/test-windows-companion.py")
@@ -104,7 +149,10 @@ final class CompanionInteropTests: XCTestCase {
         guard process.terminationStatus == 0 else {
             throw CompanionFailure("Windows Python helper exited \(process.terminationStatus)\n\(diagnostics)")
         }
-        XCTAssertTrue(diagnostics.contains("Windows companion verified 12 outgoing ACKs and 12 persisted incoming items"))
+        let expected = enrollment == nil
+            ? "Windows companion verified 12 outgoing ACKs and 12 persisted incoming items"
+            : "Windows companion verified authenticated enrollment and saved-key reconnect."
+        XCTAssertTrue(diagnostics.contains(expected))
         print(diagnostics.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
@@ -177,6 +225,23 @@ private struct CompanionFailure: Error, CustomStringConvertible {
 
     init(_ description: String) {
         self.description = description
+    }
+}
+
+private final class CapturedCredentials: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [Data] = []
+
+    var count: Int { lock.withLock { values.count } }
+
+    func save(_ secret: Data?) {
+        lock.withLock {
+            if let secret { values.append(secret) }
+        }
+    }
+
+    func matchesLast(_ secret: Data) -> Bool {
+        lock.withLock { values.last == secret }
     }
 }
 #endif

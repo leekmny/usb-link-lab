@@ -127,6 +127,8 @@ struct LabConnection {
     var paired = false
     var paused = false
     var connected = false
+    var pairingStatus: PairingStatus = .idle
+    var pairingExpiresAt: Date?
 
     var label: LabCopy {
         if connected { return .linked }
@@ -141,7 +143,8 @@ struct LabConnection {
 
     var message: LabCopy {
         if let recovery = Self.recovery(code) { return recovery }
-        return connected ? .linkedInstruction : .hostInstruction
+        if connected { return .linkedInstruction }
+        return paired ? .hostInstruction : .firstPairingInstruction
     }
 
     static func recovery(_ code: String) -> LabCopy? {
@@ -206,7 +209,14 @@ final class LabModel: ObservableObject {
             await backend.setForeground(foreground)
             ready = true
             for await value in changes {
-                connection = LabConnection(code: value.status, paired: value.paired, paused: value.paused, connected: value.connected)
+                connection = LabConnection(
+                    code: value.status,
+                    paired: value.paired,
+                    paused: value.paused,
+                    connected: value.connected,
+                    pairingStatus: value.pairingStatus,
+                    pairingExpiresAt: value.pairingExpiresAt
+                )
                 items = value.records.map(LabItem.init(record:))
             }
             await backend.setForeground(false)
@@ -220,6 +230,7 @@ final class LabModel: ObservableObject {
 
     func setForeground(_ value: Bool) async {
         foreground = value
+        if synthetic && !value { await cancelPairing() }
         await server?.setForeground(value)
     }
 
@@ -239,9 +250,44 @@ final class LabModel: ObservableObject {
         }
     }
 
-    func setSecret(_ secret: Data?, reportFailure: Bool = true) async -> Bool {
-        await perform(or: .pairFailed, reportFailure: reportFailure) { server in
-            try await server.setPairingSecret(secret)
+    func preparePairing(_ invitation: PairingInvitation) async -> Bool {
+        guard foreground, !Task.isCancelled, !busy else { return false }
+        #if DEBUG && targetEnvironment(simulator)
+        if synthetic {
+            connection.pairingStatus = .ready
+            connection.pairingExpiresAt = Date().addingTimeInterval(120)
+            return true
+        }
+        #endif
+        guard let server else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            try await server.preparePairing(invitation)
+            if Task.isCancelled || !foreground {
+                await server.cancelPairing()
+                return false
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func cancelPairing() async {
+        #if DEBUG && targetEnvironment(simulator)
+        if synthetic {
+            connection.pairingStatus = .idle
+            connection.pairingExpiresAt = nil
+            return
+        }
+        #endif
+        await server?.cancelPairing()
+    }
+
+    func forgetPairing() async {
+        _ = await perform(or: .forgetPairingFailed) { server in
+            try await server.forgetPairing()
         }
     }
 
@@ -292,17 +338,16 @@ final class LabModel: ObservableObject {
             try await work(server)
             return true
         } catch {
-            if reportFailure {
-                let message: LabCopy
-                switch (error as? LocalizedError)?.errorDescription {
-                case "queue_full": message = .queueFull
-                case "unpaired": message = .mustPair
-                case "pairing_changed": message = .pairingMismatch
-                case "storage_error": message = .storage
-                default: message = failure
-                }
-                report(message)
+            guard reportFailure else { return false }
+            let message: LabCopy
+            switch (error as? LocalizedError)?.errorDescription {
+            case "queue_full": message = .queueFull
+            case "unpaired": message = .mustPair
+            case "pairing_changed": message = .pairingMismatch
+            case "storage_error": message = .storage
+            default: message = failure
             }
+            report(message)
             return false
         }
     }

@@ -59,15 +59,15 @@ private final class TestClient {
     static let psk = Data(repeating: 0x8d, count: 32)
     static let zero = Data(repeating: 0, count: 16)
 
-    init(server: USBServer, deferServerClosure: Bool = false) async throws {
+    init(server: USBServer, psk: Data = TestClient.psk, deferServerClosure: Bool = false) async throws {
         let toServer = BytePipe(), toClient = BytePipe()
         stream = MemoryStream(toClient, toServer)
         await server.accept(MemoryStream(toServer, toClient, closeOnRequest: !deferServerClosure))
-        let ch = try Wire.makeClientHello(psk: Self.psk, nonce: randomBytes(32))
+        let ch = try Wire.makeClientHello(psk: psk, nonce: randomBytes(32))
         try await stream.write(ch)
         let sh = try await stream.exact(73)
-        let cf = try Wire.makeClientFinish(clientHello: ch, serverHello: sh, psk: Self.psk)
-        keys = try Wire.sessionKeys(clientHello: ch, serverHello: sh, clientFinish: cf, psk: Self.psk)
+        let cf = try Wire.makeClientFinish(clientHello: ch, serverHello: sh, psk: psk)
+        keys = try Wire.sessionKeys(clientHello: ch, serverHello: sh, clientFinish: cf, psk: psk)
         try await stream.write(cf)
     }
 
@@ -105,6 +105,8 @@ private final class TestClient {
 }
 
 private extension USBServer {
+    func readerTask() -> Task<Void, Never>? { session?.reader }
+    func handshakeDeadline() -> ContinuousClock.Instant? { session?.handshakeDeadline }
     func exhaustTestBudget() { session?.sendBudget.bytes = SessionBudget.limit - 100 }
     func expirePartialRead() {
         if let session, session.frameDeadline != nil {
@@ -133,6 +135,231 @@ private extension USBServer {
 }
 
 final class SessionTests: XCTestCase {
+    private func connectStream(_ server: USBServer, deferServerClosure: Bool = false) async -> MemoryStream {
+        let toServer = BytePipe(), toClient = BytePipe()
+        await server.accept(MemoryStream(toServer, toClient, closeOnRequest: !deferServerClosure))
+        return MemoryStream(toClient, toServer)
+    }
+
+    func testFreshQRCommitsOnlyAfterFinishAndRelaunchUsesSavedKey() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let credential = root.appendingPathComponent("test-credential")
+        let server = try USBServer(root: root, secret: nil, storeSecret: { key in
+            try XCTUnwrap(key).write(to: credential, options: .atomic)
+        }, invitationLifetime: 1)
+        await server.setForeground(true)
+        let candidate = randomBytes(32)
+        try await server.preparePairing(.qr(candidate))
+        let waiting = await server.snapshot()
+        XCTAssertEqual(waiting.pairingStatus, .ready)
+        XCTAssertFalse(waiting.paired)
+        let stream = await connectStream(server)
+        let hello = try Wire.makeClientHello(psk: candidate, nonce: randomBytes(32))
+        try await stream.write(Data(hello.prefix(3)))
+        try await stream.write(Data(hello.dropFirst(3)))
+        let reply = try await stream.exact(Wire.handshakeHelloSize)
+        let confirming = await server.snapshot()
+        XCTAssertEqual(confirming.pairingStatus, .connecting)
+        XCTAssertNil(confirming.pairingExpiresAt)
+        XCTAssertFalse(confirming.connected)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: credential.path))
+        // After the correct prefix the ULAB handshake gets its own ten-second budget.
+        try await Task.sleep(for: .milliseconds(1100))
+        let finish = try Wire.makeClientFinish(clientHello: hello, serverHello: reply, psk: candidate)
+        try await stream.write(finish)
+        try await wait(server) { $0.connected && $0.pairingStatus == .paired }
+        XCTAssertTrue(try Data(contentsOf: credential) == candidate)
+        await server.setForeground(false)
+
+        let reopened = try USBServer(root: root, secret: Data(contentsOf: credential), storeSecret: { _ in
+            XCTFail("Saved-key reconnect rewrote the credential")
+        })
+        await reopened.setForeground(true)
+        // Foreground loss paused the old session. Resume through the normal queue action.
+        await reopened.resume()
+        let client = try await TestClient(server: reopened, psk: candidate)
+        try await wait(reopened) { $0.connected }
+        client.stream.close()
+    }
+
+    func testUnknownTruncatedAndWrongMethodPrefixesRetainTheArmedInvitation() async throws {
+        let s = try await server()
+        try await s.preparePairing(.sixDigitCode("004271"))
+        let initial = await s.snapshot()
+        XCTAssertEqual(try XCTUnwrap(initial.pairingExpiresAt).timeIntervalSinceNow, 120, accuracy: 2)
+        let legacyHello = try Wire.makeClientHello(psk: TestClient.psk, nonce: randomBytes(32))
+        for bytes in [Data("UNKNOWN!".utf8), Data(EnrollmentWire.magic.prefix(7)), legacyHello] {
+            let stream = await connectStream(s)
+            try await stream.write(bytes)
+            await stream.output.finish()
+            let eof = try await stream.read(upTo: 1)
+            XCTAssertTrue(eof.isEmpty)
+            let after = await s.snapshot()
+            XCTAssertEqual(after.pairingStatus, .ready)
+            XCTAssertEqual(after.pairingExpiresAt, initial.pairingExpiresAt)
+        }
+        let attempt = await connectStream(s)
+        try await attempt.write(EnrollmentWire.magic)
+        try await wait(s) { $0.pairingStatus == .connecting }
+        // Reject an oversize stage-one header before consuming any declared body.
+        try await attempt.write(Data([1, 2, 1]))
+        try await wait(s) { $0.pairingStatus == .failed }
+        let replay = await connectStream(s)
+        try await replay.write(EnrollmentWire.magic)
+        let eof = try await replay.read(upTo: 1)
+        XCTAssertTrue(eof.isEmpty)
+        let afterReplay = await s.snapshot()
+        XCTAssertEqual(afterReplay.pairingStatus, .failed)
+    }
+
+    func testPrefixAndPAKEHaveDistinctDeadlinesAndPAKEIsCappedByInvitationLifetime() async throws {
+        let s = try await server()
+        try await s.preparePairing(.sixDigitCode("004271"))
+        let before = ContinuousClock.now
+        let long = await connectStream(s)
+        let prefix = await s.handshakeDeadline()
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(prefix), before.advanced(by: .seconds(5)))
+        XCTAssertLessThanOrEqual(try XCTUnwrap(prefix), ContinuousClock.now.advanced(by: .seconds(5)))
+        try await long.write(EnrollmentWire.magic)
+        try await wait(s) { $0.pairingStatus == .connecting }
+        let pake = await s.handshakeDeadline()
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(pake), before.advanced(by: .seconds(20)))
+        XCTAssertLessThanOrEqual(try XCTUnwrap(pake), ContinuousClock.now.advanced(by: .seconds(20)))
+        await s.cancelPairing()
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let limited = try USBServer(root: root, secret: nil, invitationLifetime: 1)
+        await limited.setForeground(true)
+        try await limited.preparePairing(.sixDigitCode("004271"))
+        let short = await connectStream(limited)
+        let prefixCutoff = await limited.handshakeDeadline()
+        try await short.write(EnrollmentWire.magic)
+        try await wait(limited) { $0.pairingStatus == .connecting }
+        let pakeCutoff = await limited.handshakeDeadline()
+        XCTAssertEqual(pakeCutoff, prefixCutoff)
+        try await wait(limited) { $0.pairingStatus == .failed && !$0.paired }
+        let eof = try await short.read(upTo: 1)
+        XCTAssertTrue(eof.isEmpty)
+    }
+
+    func testFailedQRAuthenticationOrStoragePreservesPreviousKeyAndRejectsCoalescedOpen() async throws {
+        enum Failure { case wrongKey, badFinish, failedStore }
+        for failure in [Failure.wrongKey, .badFinish, .failedStore] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let credential = root.appendingPathComponent("test-credential")
+            let old = randomBytes(32), candidate = randomBytes(32)
+            let server = try USBServer(root: root, secret: old, storeSecret: { key in
+                guard failure != .failedStore else { throw SessionFault.storage }
+                try XCTUnwrap(key).write(to: credential, options: .atomic)
+            })
+            try old.write(to: credential)
+            await server.setForeground(true)
+            try await server.preparePairing(.qr(candidate))
+            let stream = await connectStream(server)
+            let hello = try Wire.makeClientHello(psk: failure == .wrongKey ? old : candidate, nonce: randomBytes(32))
+            try await stream.write(hello)
+            if failure != .wrongKey {
+                let reply = try await stream.exact(Wire.handshakeHelloSize)
+                var finish = try Wire.makeClientFinish(clientHello: hello, serverHello: reply, psk: candidate)
+                let keys = try Wire.sessionKeys(clientHello: hello, serverHello: reply, clientFinish: finish, psk: candidate)
+                let open = WireBody.open(.plaintext)
+                let header = FrameHeader(type: .open, mode: .plaintext, sequence: 0, itemID: randomBytes(16),
+                                         index: 0, length: open.count)
+                if failure == .badFinish { finish[finish.startIndex] ^= 1 }
+                try await stream.write(finish + (try Wire.encode(header, body: open, keys: keys.c2s)))
+            }
+            let failed = try await wait(server) { $0.pairingStatus == .failed }
+            XCTAssertTrue(failed.paired)
+            XCTAssertFalse(failed.connected)
+            XCTAssertTrue(failed.records.isEmpty)
+            XCTAssertTrue(try Data(contentsOf: credential) == old)
+            let eof = try await stream.read(upTo: 1)
+            XCTAssertTrue(eof.isEmpty)
+            let restored = try await TestClient(server: server, psk: old)
+            try await wait(server) { $0.connected }
+            restored.stream.close()
+        }
+    }
+
+    func testExpiryAndBackgroundClosePrefixReaderWithoutConsumingAnotherInvitation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let s = try USBServer(root: root, secret: nil, invitationLifetime: 0.35)
+        await s.setForeground(true)
+        let key = randomBytes(32)
+        try await s.preparePairing(.qr(key))
+        let hanging = await connectStream(s, deferServerClosure: true)
+        let expiredReader = await s.readerTask()
+        try await hanging.write(Data(Wire.magic.prefix(1)))
+        try await wait(s) { $0.pairingStatus == .expired }
+        try await s.preparePairing(.qr(key))
+        try await hanging.write(Data(Wire.magic.dropFirst(1)))
+        await hanging.output.finish()
+        await expiredReader?.value
+        let after = await s.snapshot()
+        XCTAssertEqual(after.pairingStatus, .ready)
+        let prefix = await connectStream(s)
+        try await prefix.write(Data(Wire.magic.prefix(6)))
+        await s.setForeground(false)
+        let eof = try await prefix.read(upTo: 1)
+        XCTAssertTrue(eof.isEmpty)
+        await s.setForeground(true)
+        let finished = await s.snapshot()
+        XCTAssertEqual(finished.pairingStatus, .idle)
+        XCTAssertFalse(finished.paired)
+    }
+
+    func testReplacedOrCancelledConsumedSessionCannotCommitLateFinish() async throws {
+        let s = try await server()
+        for cancel in [false, true] {
+            let key = randomBytes(32)
+            try await s.preparePairing(.qr(key))
+            let late = await connectStream(s, deferServerClosure: true)
+            let hello = try Wire.makeClientHello(psk: key, nonce: randomBytes(32))
+            try await late.write(hello)
+            let reply = try await late.exact(Wire.handshakeHelloSize)
+            let finish = try Wire.makeClientFinish(clientHello: hello, serverHello: reply, psk: key)
+            let previousReader = await s.readerTask()
+            if cancel { await s.cancelPairing() }
+            else { try await s.preparePairing(.qr(randomBytes(32))) }
+            try await late.write(finish)
+            await late.output.finish()
+            await previousReader?.value
+            let state = await s.snapshot()
+            XCTAssertEqual(state.pairingStatus, cancel ? .idle : .ready)
+            XCTAssertFalse(state.connected)
+            let current = await s.secret
+            XCTAssertTrue(current == TestClient.psk)
+        }
+    }
+
+    func testEnrollmentWhilePausedKeepsTransfersPausedUntilResume() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let key = randomBytes(32)
+        let s = try USBServer(root: root, secret: key)
+        await s.setForeground(true)
+        try await s.enqueueText("queued", mode: .aes256GCM)
+        await s.cancelActive()
+        try await s.preparePairing(.qr(key))
+        let c = try await TestClient(server: s, psk: key)
+        let authenticated = try await wait(s) { $0.connected && $0.pairingStatus == .paired }
+        XCTAssertTrue(authenticated.paused)
+        XCTAssertEqual(authenticated.records.map(\.state), [.queued])
+        try await c.send(.open, .plaintext, randomBytes(16), WireBody.open(.plaintext))
+        let paused = try await wait(s) { !$0.connected }
+        XCTAssertTrue(paused.paused)
+        XCTAssertEqual(paused.records.map(\.state), [.queued])
+        await s.resume()
+        let resumed = try await TestClient(server: s, psk: key)
+        let (frame, _) = try await resumed.next()
+        XCTAssertEqual(frame.type, .open)
+        await s.cancelActive()
+    }
+
     private func server(in dir: URL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)) async throws -> USBServer {
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         let s = try USBServer(root: dir, secret: TestClient.psk)

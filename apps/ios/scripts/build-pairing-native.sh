@@ -41,7 +41,7 @@ for sdk in iphoneos iphonesimulator; do
         -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         "-DFETCHCONTENT_SOURCE_DIR_MBEDTLS=$work/downloads/mbedtls-src"
     cmake --build "$slice" --config Release --target ulab_pairing --parallel 4
-    xcrun lipo -verify_arch "$arch" "$slice/libulab_pairing_complete.a"
+    [[ "$(xcrun lipo -archs "$slice/libulab_pairing_complete.a")" == "$arch" ]]
 done
 
 # Keep a temporary path on the same volume so the generated package is published

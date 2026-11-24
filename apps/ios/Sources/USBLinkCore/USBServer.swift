@@ -1,17 +1,37 @@
 import Foundation
 import CryptoKit
 
+private struct ArmedInvitation {
+    let invitation: PairingInvitation
+    let deadline: ContinuousClock.Instant
+    let expiresAt: Date
+    let id: UUID
+    let expiryTask: Task<Void, Never>
+
+    var expectedMagic: Data {
+        switch invitation {
+        case .qr: return Wire.magic
+        case .code: return EnrollmentWire.magic
+        }
+    }
+}
+
 public actor USBServer {
     let store: LabStore
     private let journalURL: URL
     let usesSystemServices: Bool
+    private let storeSecret: @Sendable (Data?) throws -> Void
+    private let invitationLifetime: TimeInterval
+    private var armed: ArmedInvitation?
+    private var pairingStatus: PairingStatus = .idle
     var journal: QueueJournal
     var receivedFiles: [UUID: URL] = [:]
     var secret: Data?
     var session: LiveSession?
     private var listener: LoopbackListener?
     private var listenerID: UUID?
-    private var pendingReconnect: (stream: SessionStream, deadline: ContinuousClock.Instant, timer: Task<Void, Never>)?
+    private var listenerIsReady = false
+    private var pendingReconnect: (stream: SessionStream, accepted: ContinuousClock.Instant, timer: Task<Void, Never>)?
     private var foreground = false
     private var staging = Set<UUID>()
     private var observers: [UUID: AsyncStream<LabSnapshot>.Continuation] = [:]
@@ -19,11 +39,14 @@ public actor USBServer {
     var status = "background"
 
     public init(root: URL) throws {
-        try self.init(root: root, secret: PairingKeychain.load(), usesSystemServices: true)
+        try self.init(root: root, secret: PairingKeychain.load(), usesSystemServices: true,
+                      storeSecret: { try PairingKeychain.save($0) })
     }
 
     // Tests use temporary directories, an in-memory pairing, and an injected byte stream.
-    init(root: URL, secret: Data?, usesSystemServices: Bool = false) throws {
+    init(root: URL, secret: Data?, usesSystemServices: Bool = false,
+         storeSecret: @escaping @Sendable (Data?) throws -> Void = { _ in },
+         invitationLifetime: TimeInterval = 120) throws {
         let store = try LabStore(root: root)
         let url = root.appendingPathComponent("queue.json")
         var journal = QueueJournal()
@@ -70,6 +93,8 @@ public actor USBServer {
         self.journal = journal
         self.receivedFiles = files
         self.secret = secret
+        self.storeSecret = storeSecret
+        self.invitationLifetime = invitationLifetime
         self.usesSystemServices = usesSystemServices
         if !unavailable.isEmpty { self.status = "storage_error" }
     }
@@ -106,7 +131,8 @@ public actor USBServer {
                 state: row.state, bytes: row.bytes, detail: mismatched ? "pairing_changed" : row.detail, fileURL: url)
         }
         return LabSnapshot(status: status, paired: secret != nil, paused: journal.paused,
-                           connected: session?.keys != nil, records: rows)
+                           connected: session?.keys != nil, records: rows,
+                           pairingStatus: pairingStatus, pairingExpiresAt: armed?.expiresAt)
     }
 
     func publish(progressOnly: Bool = false) {
@@ -133,25 +159,79 @@ public actor USBServer {
         foreground = active
         if active { startListener() }
         else {
+            if armed != nil || pairingStatus == .connecting {
+                clearInvitation()
+                pairingStatus = .idle
+            }
             stopListener()
             disconnect("background", pause: hasWork)
         }
     }
 
-    public func setPairingSecret(_ newSecret: Data?) throws {
-        guard newSecret == nil || newSecret?.count == 32 else { throw SessionFault.invalidState }
-        guard secret != newSecret else { return }
-        if usesSystemServices { try PairingKeychain.save(newSecret) }
+    public func forgetPairing() throws {
+        try storeSecret(nil)
+        clearInvitation()
+        pairingStatus = .idle
         stopListener()
         disconnect("pairing_changed", pause: hasWork)
-        secret = newSecret
+        secret = nil
+        startListener()
+    }
+
+    public func preparePairing(_ invitation: PairingInvitation) throws {
+        guard foreground else { throw SessionFault.invalidState }
+        try invitation.validate()
+        clearInvitation()
+        if session != nil {
+            disconnect("pairing_changed", pause: session?.outgoing != nil || session?.incoming != nil)
+        }
+        let id = UUID()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(invitationLifetime))
+        let expiry = Task { [weak self] in
+            do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+            await self?.expireInvitation(id)
+        }
+        armed = ArmedInvitation(invitation: invitation, deadline: deadline,
+                                expiresAt: Date().addingTimeInterval(invitationLifetime), id: id, expiryTask: expiry)
+        pairingStatus = .ready
+        startListener()
+    }
+
+    public func cancelPairing() {
+        let active = armed != nil || pairingStatus == .connecting
+        clearInvitation()
+        pairingStatus = .idle
+        if active {
+            if session != nil { disconnect("cancelled", pause: false) }
+            if secret == nil { stopListener() }
+            startListener()
+        } else { publish() }
+    }
+
+    private func clearInvitation() {
+        armed?.expiryTask.cancel()
+        armed = nil
+    }
+
+    private func expireInvitation(_ id: UUID) {
+        guard armed?.id == id else { return }
+        clearInvitation()
+        pairingStatus = .expired
+        if session != nil { disconnect("timeout", pause: false) }
+        if secret == nil { stopListener() }
         startListener()
     }
 
     private func startListener() {
         guard foreground else { status = "background"; publish(); return }
-        guard secret != nil else { status = "unpaired"; publish(); return }
-        guard listener == nil else { publish(); return }
+        guard secret != nil || armed != nil else { status = "unpaired"; publish(); return }
+        if listener != nil {
+            if session == nil {
+                status = journal.paused ? "paused" : (listenerIsReady ? "listening" : "starting")
+            }
+            publish()
+            return
+        }
         if !usesSystemServices {
             status = journal.paused ? "paused" : "listening"
             publish()
@@ -168,43 +248,50 @@ public actor USBServer {
             }, onConnection: { [weak self] stream in
                 Task { await self?.accept(stream, listenerID: id) }
             })
-        } catch { status = "listener_failed"; listenerID = nil }
+        } catch { listenerFailed(id); return }
         publish()
     }
 
     private func stopListener() {
         listenerID = nil
+        listenerIsReady = false
         listener?.stop()
         listener = nil
     }
 
     private func listenerReady(_ id: UUID) {
-        guard listenerID == id, session == nil else { return }
+        guard listenerID == id else { return }
+        listenerIsReady = true
+        guard session == nil else { return }
         status = journal.paused ? "paused" : "listening"
         publish()
     }
 
     private func listenerFailed(_ id: UUID) {
         guard listenerID == id else { return }
+        if armed != nil {
+            clearInvitation()
+            pairingStatus = .failed
+        }
         stopListener()
         disconnect("listener_failed", pause: session != nil)
     }
 
     func accept(_ stream: SessionStream, listenerID expected: UUID? = nil) {
-        guard listenerID == expected, foreground, !journal.paused,
-              let secret, let peer = peerID else { stream.close(); return }
-        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        guard listenerID == expected, foreground,
+              armed != nil || (secret != nil && !journal.paused) else { stream.close(); return }
+        let accepted = ContinuousClock.now
         if let session {
             guard session.readyEnqueued, session.incoming == nil, session.outgoing == nil,
                   pendingReconnect == nil else { stream.close(); return }
             let timer = Task { [weak self] in
-                do { try await ContinuousClock().sleep(until: deadline) } catch { return }
+                do { try await ContinuousClock().sleep(until: accepted.advanced(by: .seconds(5))) } catch { return }
                 await self?.expirePending(stream)
             }
-            pendingReconnect = (stream, deadline, timer)
+            pendingReconnect = (stream, accepted, timer)
             return
         }
-        beginSession(stream, secret: secret, peer: peer, deadline: deadline)
+        beginSession(stream, accepted: accepted)
     }
 
     private func expirePending(_ stream: SessionStream) {
@@ -220,19 +307,69 @@ public actor USBServer {
         pending?.timer.cancel()
         disconnect("listening", pause: false)
         guard let pending else { return }
-        guard foreground, !journal.paused, pending.deadline > .now,
-              let secret, let peer = peerID else { pending.stream.close(); return }
-        beginSession(pending.stream, secret: secret, peer: peer, deadline: pending.deadline)
+        guard foreground, !journal.paused, secret != nil,
+              pending.accepted.advanced(by: .seconds(5)) > .now else { pending.stream.close(); return }
+        beginSession(pending.stream, accepted: pending.accepted)
     }
 
-    private func beginSession(_ stream: SessionStream, secret: Data, peer: Data, deadline: ContinuousClock.Instant) {
-        let generation = LiveSession(stream: stream, peer: peer)
-        generation.handshakeDeadline = deadline
+    private func beginSession(_ stream: SessionStream, accepted: ContinuousClock.Instant) {
+        let generation = LiveSession(stream: stream)
+        let prefixDeadline = accepted.advanced(by: .seconds(5))
+        generation.handshakeDeadline = min(prefixDeadline, armed?.deadline ?? prefixDeadline)
         session = generation
         status = "handshake"
         publish()
         armTimeout(generation)
-        Task { await run(generation, psk: secret) }
+        generation.reader = Task { await run(generation, accepted: accepted) }
+    }
+
+    /// Reads only the selected protocol's bytes. An invalid prefix leaves an armed invitation available.
+    func authenticate(_ s: LiveSession, accepted: ContinuousClock.Instant) async throws {
+        let prefix = try await s.stream.exact(Wire.magic.count)
+        try validate(s)
+        let psk: Data
+        var helloPrefix = prefix
+        if let attempt = armed {
+            guard prefix == attempt.expectedMagic else { throw SessionFault.protocolViolation }
+            clearInvitation()
+            pairingStatus = .connecting
+            publish()
+            switch attempt.invitation {
+            case .qr(let candidate):
+                psk = candidate
+            case .code(let code):
+                let deadline = min(ContinuousClock.now.advanced(by: .seconds(20)), attempt.deadline)
+                s.handshakeDeadline = deadline
+                armTimeout(s)
+                psk = try await EnrollmentWire.respond(on: s.stream, code: code, initialMagic: prefix, deadline: deadline)
+                try validate(s)
+                helloPrefix = Data()
+            }
+            s.handshakeDeadline = .now.advanced(by: .seconds(10))
+        } else {
+            guard prefix == Wire.magic, let secret, !journal.paused else { throw SessionFault.protocolViolation }
+            psk = secret
+            s.handshakeDeadline = accepted.advanced(by: .seconds(10))
+        }
+        armTimeout(s)
+        let ch = helloPrefix + (try await s.stream.exact(Wire.handshakeHelloSize - helloPrefix.count))
+        try validate(s)
+        let sh = try Wire.makeServerHello(clientHello: ch, psk: psk, nonce: randomBytes(32))
+        try await s.stream.write(sh)
+        try validate(s)
+        let cf = try await s.stream.exact(Wire.handshakeFinishSize)
+        try validate(s)
+        let keys = try Wire.sessionKeys(clientHello: ch, serverHello: sh, clientFinish: cf, psk: psk)
+        if pairingStatus == .connecting {
+            try PairingKeychain.validate(psk)
+            do { try storeSecret(psk) } catch { throw SessionFault.storage }
+            secret = psk
+            pairingStatus = .paired
+        }
+        s.peer = peerID
+        s.keys = keys
+        s.handshakeDeadline = nil
+        armTimeout(s)
     }
 
     func armTimeout(_ generation: LiveSession) {
@@ -265,7 +402,13 @@ public actor USBServer {
         guard !generation.expired else { throw SessionFault.timeout }
     }
 
-    public func cancelActive() { disconnect("cancelled", pause: true) }
+    public func cancelActive() {
+        if armed != nil {
+            clearInvitation()
+            pairingStatus = .idle
+        }
+        disconnect("cancelled", pause: true)
+    }
 
     func disconnect(_ reason: String, pause: Bool) {
         pendingReconnect?.timer.cancel()
@@ -274,6 +417,8 @@ public actor USBServer {
         let old = session
         session = nil
         old?.watchdog?.cancel()
+        old?.reader?.cancel()
+        old?.reader = nil
         old?.writerTail?.cancel()
         old?.stream.close()
         if let outgoing = old?.outgoing {
@@ -287,6 +432,8 @@ public actor USBServer {
             mutate(incoming.local) { $0.state = .interrupted; $0.detail = reason }
         }
         old?.keys = nil
+        if pairingStatus == .connecting { pairingStatus = .failed }
+        if armed == nil && secret == nil { stopListener() }
         if pause { journal.paused = true }
         status = reason
         do { try persist() } catch { status = "storage_error"; journal.paused = true }

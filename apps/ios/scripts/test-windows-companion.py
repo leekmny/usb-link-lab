@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+import ctypes
 import hashlib
 import json
 import os
@@ -94,20 +95,77 @@ async def exchange(root, psk, mode_type, session_type, storage_type):
     )
 
 
+
+def load_mac_bridge(path):
+    """Adapt only the Windows native loader for the host's identical bridge."""
+    library = ctypes.CDLL(path)
+    ptr = ctypes.c_void_p
+    size = ctypes.c_size_t
+    declarations = (
+        ("ulab_pake_new", [ctypes.c_int, ptr, size], ptr),
+        ("ulab_pake_write", [ptr, ctypes.c_int, ptr, size, ctypes.POINTER(size)], ctypes.c_int),
+        ("ulab_pake_read", [ptr, ctypes.c_int, ptr, size], ctypes.c_int),
+        ("ulab_pake_derive", [ptr, ptr], ctypes.c_int),
+        ("ulab_pake_free", [ptr], None),
+    )
+    for name, arguments, result in declarations:
+        function = getattr(library, name)
+        function.argtypes = arguments
+        function.restype = result
+    return library
+
+
+async def enroll(root, method, psk, mode_type, session_type, storage_type):
+    from usblinklab import pin_pairing
+
+    native = os.environ.get("ULAB_NATIVE_TEST_LIBRARY")
+    if method == "pin" and native:
+        bridge = load_mac_bridge(native)
+        pin_pairing._native = lambda: bridge
+
+    storage = storage_type(root / "windows-enrollment-store")
+    for initial in (True, False):
+        reader, writer = await asyncio.open_connection("127.0.0.1", 43123)
+        try:
+            if initial and method == "pin":
+                psk = await pin_pairing.pair_client(reader, writer, os.environ.pop("ULAB_TEST_PIN"))
+            session = session_type(reader, writer, psk, storage, lambda _: None, client=True)
+            job = storage.stage_text("USBLinkLab synthetic enrollment test", mode_type.AES256GCM)
+            run = asyncio.create_task(session.run())
+            try:
+                await session.wait_ready()
+                await session.send(job)
+                await session.request_drain()
+                assert await run == "drained"
+            finally:
+                if not run.done():
+                    run.cancel()
+                await asyncio.gather(run, return_exceptions=True)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+    print("Windows companion verified authenticated enrollment and saved-key reconnect.", flush=True)
+
+
 def main():
     root = Path(sys.argv[1]).resolve(strict=True)
     source = Path(os.environ["ULAB_WINDOWS_SOURCE"]).resolve(strict=True)
     if not (source / "usblinklab" / "session.py").is_file():
         raise RuntimeError("ULAB_WINDOWS_SOURCE must identify the Windows companion apps/windows directory")
-    psk = bytes.fromhex(os.environ.pop("ULAB_TEST_PSK"))
-    if len(psk) != 32:
+    method = os.environ.get("ULAB_TEST_ENROLLMENT")
+    psk = bytes.fromhex(os.environ.pop("ULAB_TEST_PSK", ""))
+    if method != "pin" and len(psk) != 32:
         raise RuntimeError("The synthetic pairing secret must contain 32 bytes")
     sys.path.insert(0, str(source))
     from usblinklab.protocol import Mode
     from usblinklab.session import Session
     from usblinklab.storage import Storage
 
-    asyncio.run(asyncio.wait_for(exchange(root, psk, Mode, Session, Storage), timeout=30))
+    if method in ("qr", "pin"):
+        task = enroll(root, method, psk, Mode, Session, Storage)
+    else:
+        task = exchange(root, psk, Mode, Session, Storage)
+    asyncio.run(asyncio.wait_for(task, timeout=30))
 
 
 if __name__ == "__main__":

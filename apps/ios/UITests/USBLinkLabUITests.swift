@@ -48,6 +48,44 @@ final class USBLinkLabUITests: XCTestCase {
         capture("04-unconfirmed-accessibility", failure)
     }
 
+    func testCameraUnavailableFallsBackToSixDigitPairing() {
+        let app = start("onboarding")
+        app.buttons["open-pairing"].tap()
+        let scan = app.buttons["scan-pairing-qr"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        scan.tap()
+        XCTAssertTrue(app.staticTexts["pairing-camera-feedback"].waitForExistence(timeout: 5))
+
+        let useCode = app.buttons["enter-pairing-code"]
+        useCode.tap()
+        let code = app.secureTextFields["pairing-code"]
+        XCTAssertTrue(code.waitForExistence(timeout: 5))
+        let prepare = app.buttons["prepare-pairing"]
+        XCTAssertFalse(prepare.isEnabled)
+        code.tap()
+        code.typeText("00123")
+        XCTAssertFalse(prepare.isEnabled)
+        code.typeText("4")
+        XCTAssertTrue(prepare.isEnabled)
+        code.typeText("5")
+        XCTAssertFalse(prepare.isEnabled)
+        code.typeText(XCUIKeyboardKey.delete.rawValue)
+        XCTAssertTrue(prepare.isEnabled)
+        if !prepare.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        prepare.tap()
+
+        XCTAssertTrue(app.staticTexts["pairing-ready"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["pairing-countdown"].exists)
+        XCTAssertFalse(code.exists)
+        capture("05-pairing-ready-simulator", app)
+
+        app.buttons["cancel-pairing"].tap()
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        useCode.tap()
+        XCTAssertTrue(code.exists)
+        XCTAssertFalse(prepare.isEnabled)
+    }
+
     private func start(_ state: String, dark: Bool = false, accessible: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--lab-synthetic", "--lab-state=\(state)", dark ? "--lab-dark" : "--lab-light"]

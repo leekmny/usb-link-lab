@@ -29,12 +29,18 @@ public struct TransferRecord: Identifiable, Sendable {
     }
 }
 
+public enum PairingStatus: Equatable, Sendable {
+    case idle, ready, connecting, expired, failed, paired
+}
+
 public struct LabSnapshot: Sendable {
     public let status: String
     public let paired: Bool
     public let paused: Bool
     public let connected: Bool
     public let records: [TransferRecord]
+    public var pairingStatus: PairingStatus = .idle
+    public var pairingExpiresAt: Date?
 }
 
 struct JournalEntry: Codable {
@@ -118,7 +124,7 @@ final class ReceivingItem {
 
 final class LiveSession {
     let stream: SessionStream
-    let peer: Data
+    var peer: Data?
     var keys: (c2s: DirectionKeys, s2c: DirectionKeys)?
     var sendBudget = SessionBudget()
     var receiveBudget = SessionBudget()
@@ -128,6 +134,7 @@ final class LiveSession {
     var outgoing: SendingItem?
     var incoming: ReceivingItem?
     var writerTail: Task<Void, Error>?
+    var reader: Task<Void, Never>?
     var watchdog: Task<Void, Never>?
     var watchdogAt: ContinuousClock.Instant?
     var handshakeDeadline: ContinuousClock.Instant? = .now.advanced(by: .seconds(10))
@@ -141,9 +148,8 @@ final class LiveSession {
     var readyWritten = false
     var readyReceived = false
 
-    init(stream: SessionStream, peer: Data) {
+    init(stream: SessionStream) {
         self.stream = stream
-        self.peer = peer
     }
 
     var drained: Bool { readyWritten && readyReceived }

@@ -15,6 +15,7 @@ The mode is frozen at enqueue. A complete delivery requires the receiver's durab
 
 - [ULAB v1 shared protocol](../../protocol/PROTOCOL_V1.md)
 - [Public interoperability fixtures](../../protocol/vectors/ios-corpus.md)
+- [QR and six-digit USB pairing](../../docs/ios-pairing.md)
 - [iPhone build, signing and Windows handoff](../../docs/ios-handoff.md)
 - [Verification status](../../docs/ios-verification-matrix.md)
 - [Documentation findings and device observations](../../docs/ios-verified-assumptions.md)

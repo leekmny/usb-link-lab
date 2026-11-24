@@ -29,6 +29,7 @@ struct USBLinkLabApp: App {
                 .environment(\.locale, shownLanguage.locale)
                 .preferredColorScheme(shownAppearance)
                 .tint(LabPalette.teal)
+                .modifier(LabPrivacyCover())
                 .task { await model.connect() }
                 .onChange(of: scenePhase, initial: true) { _, phase in
                     Task { await model.setForeground(phase == .active) }
@@ -91,22 +92,44 @@ private struct LabRoot: View {
             .tag(Page.settings)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            if model.synthetic {
-                HStack(spacing: 6) {
-                    Image(systemName: "testtube.2").accessibilityHidden(true)
-                    Text(language.text(.synthetic)).accessibilityIdentifier("synthetic-label")
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(LabPalette.caution)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 7)
-                .padding(.horizontal, 12)
-                .background(LabPalette.warningSurface)
-            }
+            if model.synthetic { LabSyntheticBanner(language: language) }
         }
         .alert(item: $model.problem) { problem in
             Alert(title: Text(language.text(problem.message)), dismissButton: .default(Text(language.text(.done))))
         }
+    }
+}
+
+struct LabPrivacyCover: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .accessibilityHidden(scenePhase != .active)
+            .overlay {
+                if scenePhase != .active {
+                    LabPalette.canvas
+                        .ignoresSafeArea()
+                        .accessibilityHidden(true)
+                }
+            }
+    }
+}
+
+struct LabSyntheticBanner: View {
+    let language: LabLanguage
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "testtube.2").accessibilityHidden(true)
+            Text(language.text(.synthetic)).accessibilityIdentifier("synthetic-label")
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(LabPalette.caution)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 12)
+        .background(LabPalette.warningSurface)
     }
 }
 

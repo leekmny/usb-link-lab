@@ -2,17 +2,10 @@ import Foundation
 import CryptoKit
 
 extension USBServer {
-    func run(_ s: LiveSession, psk: Data) async {
+    func run(_ s: LiveSession, accepted: ContinuousClock.Instant) async {
         do {
-            let ch = try await s.stream.exact(Wire.handshakeHelloSize)
+            try await authenticate(s, accepted: accepted)
             try validate(s)
-            let sh = try Wire.makeServerHello(clientHello: ch, psk: psk, nonce: randomBytes(32))
-            try await s.stream.write(sh)
-            let cf = try await s.stream.exact(Wire.handshakeFinishSize)
-            try validate(s)
-            s.keys = try Wire.sessionKeys(clientHello: ch, serverHello: sh, clientFinish: cf, psk: psk)
-            s.handshakeDeadline = nil
-            armTimeout(s)
             status = "connected"
             publish()
             scheduleNext(s)
@@ -122,6 +115,7 @@ extension USBServer {
     private func receive(_ h: FrameHeader, body: Data, session s: LiveSession) async throws {
         switch h.type {
         case .open:
+            guard !journal.paused else { throw SessionFault.closed }
             try WireBody.decodeOpen(body, mode: h.mode)
             guard !s.requestReceived, s.incoming == nil, s.peerIDs.count < SessionBudget.idLimit,
                   s.peerIDs.insert(h.itemID).inserted else { throw SessionFault.protocolViolation }

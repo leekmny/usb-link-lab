@@ -62,7 +62,7 @@ public enum PairingKeychain {
         }
     }
 
-    private static func validate(_ secret: Data) throws {
+    static func validate(_ secret: Data) throws {
         guard secret.count == 32, Set(secret).count > 1 else { throw Failure.invalidSecret }
         let digest = SHA256.hash(data: secret).map { String(format: "%02x", $0) }.joined()
         guard digest != fixtureDigest else { throw Failure.invalidSecret }

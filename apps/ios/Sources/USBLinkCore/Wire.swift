@@ -69,7 +69,7 @@ enum Wire {
     static let maxJSONSize = 4_096
     static let maxFileSize: UInt64 = 1_073_741_824
 
-    private static let magic = Data("ULAB0001".utf8)
+    static let magic = Data("ULAB0001".utf8)
     private static let headerAndTagSize = 72
     private static let prefixAndHeaderSize = 44
     private static let maxFrameLength = 1_048_576
