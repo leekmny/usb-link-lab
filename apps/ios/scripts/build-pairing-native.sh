@@ -35,8 +35,9 @@ for sdk in iphoneos iphonesimulator; do
     if [[ "$sdk" == iphonesimulator ]]; then arch="$host_arch"; fi
     slice="$work/$sdk"
     # FetchContent's build directory is per slice. Its read-only source is reused.
-    cmake -S "$source" -B "$slice" -G Xcode -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
-        -DCMAKE_SYSTEM_NAME=iOS "-DCMAKE_OSX_SYSROOT=$sdk" "-DCMAKE_OSX_ARCHITECTURES=$arch" \
+    sdk_path="$(xcrun --sdk "$sdk" --show-sdk-path)"
+    cmake -S "$source" -B "$slice" -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_SYSTEM_NAME=iOS "-DCMAKE_OSX_SYSROOT=$sdk_path" "-DCMAKE_OSX_ARCHITECTURES=$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
         "-DFETCHCONTENT_SOURCE_DIR_MBEDTLS=$work/downloads/mbedtls-src"
     cmake --build "$slice" --config Release --target ulab_pairing --parallel 4
