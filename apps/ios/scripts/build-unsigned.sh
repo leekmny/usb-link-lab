@@ -14,6 +14,8 @@ contract="$repo_dir/protocol/PROTOCOL_V1.md"
 contract_hash="$(shasum -a 256 "$contract" | awk '{print $1}')"
 [[ "$contract_hash" == 535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f ]]
 
+bash "$ios_dir/scripts/build-pairing-native.sh"
+
 xcodebuild -quiet -project "$ios_dir/USBLinkLab.xcodeproj" -scheme USBLinkLab \
     -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath "$temporary/Build" ARCHS=arm64 CODE_SIGNING_ALLOWED=NO build
@@ -49,7 +51,9 @@ mv "$temporary/$ipa" "$output_dir/$ipa"
     echo "Host architecture: $(uname -m)"
     echo "Target: iphoneos arm64, iOS 17.0+, org.usblinklab.ios"
     echo "Signing: unsigned, needs development signing and provisioning"
-    echo "Swift dependencies: local USBLinkCore; Apple SDK frameworks only"
+    echo "Swift dependencies: local USBLinkCore and the ULABPairing static XCFramework"
+    echo "Native dependency: Mbed TLS 3.6.7 (SHA-256 verified by shared CMake build)"
+    cmake --version | sed -n '1p'
     xcodebuild -version
     echo "SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
     xcrun swift --version

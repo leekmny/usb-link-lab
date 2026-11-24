@@ -16,3 +16,4 @@ artifacts/
 *.mobileprovision
 *.pcap*
 .env
+/apps/ios/Generated/

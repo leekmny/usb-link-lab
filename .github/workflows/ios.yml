@@ -7,6 +7,7 @@ on:
       - 'apps/ios/**'
       - 'protocol/**'
       - 'tools/fixtures/**'
+      - 'native/usb_pairing/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
@@ -36,6 +37,8 @@ jobs:
         run: |
           python -m pip install -r tools/fixtures/requirements.txt
           python tools/fixtures/generate_ulab1.py --check
+      - name: Build the pinned native pairing bridge
+        run: bash apps/ios/scripts/build-pairing-native.sh
       - name: Run the Swift package tests
         run: |
           xcodebuild -version
@@ -91,6 +94,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Build the pinned native pairing bridge
+        run: bash apps/ios/scripts/build-pairing-native.sh
       - name: Run native interface tests on iOS 26.2
         run: |
           mkdir -p artifacts/simulator
@@ -98,9 +103,12 @@ jobs:
           xcodebuild -version
           xcrun simctl list runtimes
           device=$(xcrun simctl create USBLinkLab-CI com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
           xcodebuild -project apps/ios/USBLinkLab.xcodeproj -scheme USBLinkLab \
             -destination "platform=iOS Simulator,id=$device" \
-            -parallel-testing-enabled NO \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 \
             -resultBundlePath artifacts/simulator/USBLinkLab-Simulator.xcresult test \
             | tee artifacts/simulator/test.log
       - name: Export synthetic test evidence
