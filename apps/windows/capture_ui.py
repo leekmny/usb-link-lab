@@ -72,7 +72,8 @@ def main():
             args.path.parent.mkdir(parents=True, exist_ok=True)
             if not window.grab().save(str(args.path), "PNG"):
                 raise RuntimeError("Could not save native Windows screenshot")
-            print(f"{args.scenario}: {app.platformName()}, {window.connection_state}, {window.grab().size()}")
+            print(f"{args.scenario}: {app.platformName()}, {window.connection_state}, "
+                  f"scale={window.devicePixelRatioF():.2f}, {window.grab().size()}")
         finally:
             window.close()
             bridge.shutdown()

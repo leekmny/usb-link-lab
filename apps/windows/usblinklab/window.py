@@ -25,7 +25,7 @@ def label(text="", name="", *, wrap=False, size=None):
     widget.setWordWrap(wrap)
     if size:
         font = widget.font()
-        font.setPointSizeF(size)
+        font.setPixelSize(round(size * 4 / 3))
         font.setWeight(QFont.Weight.DemiBold)
         widget.setFont(font)
     return widget
@@ -288,12 +288,19 @@ class Window(QMainWindow):
         self.colors = THEMES.get(self.theme, THEMES["light"])
         families = QFontDatabase.families()
         font = QFont("Segoe UI Variable" if "Segoe UI Variable" in families else "Segoe UI")
-        font.setPointSizeF(12.5 if self.large else 10.5)
+        self.body_pixels = 17 if self.large else 14
+        font.setPixelSize(self.body_pixels)
         self.setFont(font)
+        self.items.setFont(font)
+        self.items.header().setFont(font)
+        self.tray.setFont(font)
         self.sidebar.setFixedWidth(223 if self.large else 207)
         self.inspector.setFixedWidth(273 if self.large else 255)
-        self.message.setFixedHeight(84 if self.large else 73)
         self.setStyleSheet(stylesheet(self.colors))
+        self.message.setFixedHeight(76 if self.large else 68)
+        diagnostic_font = QFont("Cascadia Mono" if "Cascadia Mono" in families else "Consolas")
+        diagnostic_font.setPixelSize(14 if self.large else 12)
+        self.diagnostic_text.setFont(diagnostic_font)
         palette = self.message.palette()
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(self.colors["secondary"]))
         self.message.setPalette(palette)
@@ -378,7 +385,8 @@ class Window(QMainWindow):
             f"USBLinkLab {__version__}  /  {PROTOCOL_REVISION}\n"
             f"{self.tr_key('usb_only')}\n{self.connection_state}"
         )
-        self.feedback_label.setStyleSheet(f"color: {self.colors.get(self.feedback_type, self.colors['secondary'])}")
+        feedback_color = self.colors.get(self.feedback_type, self.colors["secondary"])
+        self.feedback_label.setStyleSheet(f"color: {feedback_color}; font-size: {self.body_pixels}px")
         self.feedback_label.setText(self.tr_key(self.feedback))
         self.feedback_label.setVisible(bool(self.feedback))
         self._refresh_controls()
@@ -389,7 +397,7 @@ class Window(QMainWindow):
         self.exposure.setText(self.mode_meaning(mode))
         self.exposure.setVisible(mode is not None)
         tone = "exposure" if mode in (0, 3) else "secondary"
-        self.exposure.setStyleSheet(f"color: {self.colors[tone]}")
+        self.exposure.setStyleSheet(f"color: {self.colors[tone]}; font-size: {self.body_pixels}px")
         active = self.connection_state in {"connecting", "connected"}
         selected = self.devices.currentData() is not None
         self.devices.setEnabled(not active and self.devices.count() > 1)
@@ -680,7 +688,7 @@ class Window(QMainWindow):
         mode = event["mode"]
         self.detail_security.setText(f"{self.mode_name(mode)}\n{self.mode_meaning(mode)}")
         tone = "exposure" if mode in (0, 3) else "primary"
-        self.detail_security.setStyleSheet(f"color: {self.colors[tone]}")
+        self.detail_security.setStyleSheet(f"color: {self.colors[tone]}; font-size: {self.body_pixels}px")
         self.detail_status.setText(f"{self.tr_key(status)}  /  {byte_count(event['size'])}")
         self.progress.setValue(int(1000 * event["transferred"] / max(1, event["size"])))
         self.retry.setVisible(event["direction"] == "outgoing" and status in {"interrupted", "unconfirmed"})

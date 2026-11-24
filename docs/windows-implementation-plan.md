@@ -8,7 +8,7 @@
 - [x] Test and build the USB-only transport and diagnostic probe. Check Windows device support, select a device explicitly, and keep the test stream out of the normal app entry point.
 - [x] Test and implement streamed snapshots, authenticated duplex state transitions, durable receive commits, queue admission, cancellation, reconnect, and drain.
 - [x] Exercise the Windows desktop UI against the isolated test peer. Verify pairing, mode snapshots, file review, history and previews, diagnostics, and localized layouts.
-- [ ] Build and smoke-test the portable EXE/ZIP, record licenses and checksums, publish to the confirmed repository, and verify the remote commit and assets.
+- [x] Build and smoke-test the portable EXE/ZIP. Record licenses, build provenance and checksums.
 - [ ] Check the real cable path when the signed foreground iPhone listener is available. Record device, Swift interop, wireless-disabled and unplug outcomes separately.
 
 Review focus includes late final ACKs, modified source data while staging, network-only device selections, committed files when acknowledgment is lost, and shutdown during concurrent transfers.

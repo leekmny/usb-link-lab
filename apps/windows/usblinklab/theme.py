@@ -79,7 +79,14 @@ def stylesheet(t):
         border-bottom: 1px solid {t['line']}; padding: 8px 5px;
     }}
     QAbstractScrollArea {{ selection-color: {t['ink']}; selection-background-color: {t['selected']}; }}
-    QProgressBar {{ border: 1px solid {t['line']}; border-radius: 5px; text-align: center; min-height: 18px; }}
+    QScrollBar:vertical {{ width: 8px; background: transparent; margin: 0; }}
+    QScrollBar::handle:vertical {{ background: {t['line']}; border-radius: 4px; min-height: 16px; }}
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+    QProgressBar {{
+        background: {t['field']}; border: 1px solid {t['line']};
+        border-radius: 5px; text-align: center; min-height: 18px;
+    }}
     QProgressBar::chunk {{ background: {t['selected']}; border-radius: 4px; }}
     QToolTip {{ color: {t['ink']}; background: {t['surface']}; border: 1px solid {t['line']}; }}
     """
