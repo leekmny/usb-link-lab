@@ -6,7 +6,9 @@
 - Contract: `ULAB1-20261124-R1`; SHA-256 `535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f`
 - App bundle ID: `org.usblinklab.ios`; deployment target: iOS 17; device architecture: arm64
 - Source: `apps/ios/USBLinkLab.xcodeproj`, `App.xcconfig`, and local `USBLinkCore` Swift package. The app and core use Apple platform frameworks with zero external Swift packages.
-- Device release: [iPhone 0.1.0 unsigned prerelease](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.0); build commit `088a335389a33429d14eccce229ed390d1572d1b`.
+- Latest unsigned build [iPhone 0.1.1](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.1) from `6cd05258b9922d90a6f7ff49cf671208d5f8db0c`.
+- Release IPA SHA-256 `07d254ec8b24ac0058d3b75fc88a79e094682a636009def148203a852014cdb8`.
+- Physical signing and launch used [iPhone 0.1.0](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.0) from `088a335389a33429d14eccce229ed390d1572d1b`. Both versions use the same ULAB contract.
 - Evidence: [verification matrix](ios-verification-matrix.md) and [iPhone workflow](https://github.com/leekmny/usb-link-lab/actions/workflows/ios.yml)
 
 ## Build and verify
