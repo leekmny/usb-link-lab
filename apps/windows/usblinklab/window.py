@@ -5,13 +5,13 @@ from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
-from PySide6.QtCore import QSize, Qt, QSettings, QTimer
+from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QColor, QFont, QFontDatabase, QIcon, QImage, QImageReader, QKeySequence, QPalette,
     QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -246,6 +246,11 @@ class Window(QMainWindow):
         self.feedback_type = "muted"
         self.staging = False
         self.show_history = False
+        self.selecting_messages = False
+        self.deleting_selection = False
+        self.checked_messages = set()
+        self.previous_history_selection = None
+        self.bulk_delete_result = None
         self._build()
         self._apply_appearance()
         self._retranslate()
@@ -338,6 +343,27 @@ class Window(QMainWindow):
         view.addLayout(title_row)
         self.subtitle = label(name="muted", wrap=True)
         view.addWidget(self.subtitle)
+
+        self.message_selection = QWidget()
+        message_actions = QHBoxLayout(self.message_selection)
+        message_actions.setContentsMargins(0, 0, 0, 0)
+        self.select_messages = self._button("select_messages", lambda: self._set_message_selection(True), name="quiet")
+        self.selection_count = label(name="muted")
+        self.selection_count.setAccessibleIdentifier("selected-message-count")
+        self.cancel_message_selection = self._button(
+            "cancel_message_selection", lambda: self._set_message_selection(False), name="quiet"
+        )
+        self.delete_selected_messages = self._button(
+            "delete_selected_messages", self._delete_selected_messages
+        )
+        message_actions.addWidget(self.select_messages)
+        message_actions.addWidget(self.selection_count)
+        message_actions.addStretch()
+        message_actions.addWidget(self.cancel_message_selection)
+        message_actions.addWidget(self.delete_selected_messages)
+        self.message_selection.hide()
+        view.addWidget(self.message_selection)
+
         self.empty = QWidget()
         empty_layout = QVBoxLayout(self.empty)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -366,6 +392,7 @@ class Window(QMainWindow):
         for column in (1, 2, 3):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.items.itemSelectionChanged.connect(self._show_detail)
+        self.items.itemChanged.connect(self._message_check_changed)
         self.items.itemActivated.connect(lambda *_: self._open_details())
         view.addWidget(self.items, 2)
         self.items.hide()
@@ -458,6 +485,9 @@ class Window(QMainWindow):
         layout.addWidget(self.inspector)
         self.inspector.hide()
         self._send_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.send.click)
+        self._selection_escape = QShortcut(QKeySequence("Escape"), self)
+        self._selection_escape.activated.connect(lambda: self._set_message_selection(False))
+        self._selection_escape.setEnabled(False)
         self.devices.currentIndexChanged.connect(self._refresh_controls)
         self.mode.currentIndexChanged.connect(self._refresh_controls)
         self.message.textChanged.connect(self._refresh_controls)
@@ -541,6 +571,93 @@ class Window(QMainWindow):
         self.title.setText(self.tr_key("history" if history else "conversation"))
         self.subtitle.setText(self.tr_key("history_intro" if history else "title_intro"))
         self.compose.setVisible(not history)
+        if not history:
+            self._set_message_selection(False)
+        self._refresh_message_selection()
+
+    def _set_message_selection(self, active):
+        if active == self.selecting_messages:
+            return
+        if active:
+            selected = self._selected()
+            self.previous_history_selection = selected["id"] if selected is not None else None
+        self.selecting_messages = active
+        self.checked_messages.clear()
+        with QSignalBlocker(self.items):
+            self.items.clearSelection()
+            self.items.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection if active
+                                        else QAbstractItemView.SelectionMode.SingleSelection)
+            for item, event in self.rows.values():
+                self._apply_message_check(item, event)
+            if not active and self.previous_history_selection in self.rows:
+                self.items.setCurrentItem(self.rows[self.previous_history_selection][0])
+        self.details_toggle.setEnabled(not active)
+        self.inspector.setVisible(not active and self.details_toggle.isChecked())
+        self._send_shortcut.setEnabled(not active)
+        self._refresh_message_selection()
+        self._show_detail()
+
+    def _apply_message_check(self, item, event):
+        checkable = Qt.ItemFlag.ItemIsUserCheckable
+        if self.selecting_messages and self._can_delete_message(event):
+            item.setFlags(item.flags() | checkable)
+            state = Qt.CheckState.Checked if event["id"] in self.checked_messages else Qt.CheckState.Unchecked
+            item.setCheckState(0, state)
+        else:
+            self.checked_messages.discard(event["id"])
+            item.setFlags(item.flags() & ~checkable)
+            item.setData(0, Qt.ItemDataRole.CheckStateRole, None)
+
+    def _message_check_changed(self, item, column):
+        if not self.selecting_messages or self.deleting_selection or column != 0:
+            return
+        entry = self.rows.get(item.data(0, Qt.ItemDataRole.UserRole))
+        if entry is None or not self._can_delete_message(entry[1]):
+            return
+        row_id = entry[1]["id"]
+        if item.checkState(0) == Qt.CheckState.Checked:
+            self.checked_messages.add(row_id)
+        else:
+            self.checked_messages.discard(row_id)
+        self._refresh_message_selection()
+
+    def _refresh_message_selection(self):
+        self.message_selection.setVisible(self.show_history)
+        self.select_messages.setVisible(not self.selecting_messages)
+        self.select_messages.setEnabled(not self.deleting_selection and any(
+            self._can_delete_message(event) for _, event in self.rows.values()
+        ))
+        for widget in (self.selection_count, self.cancel_message_selection, self.delete_selected_messages):
+            widget.setVisible(self.selecting_messages)
+        self.selection_count.setText(self.tr_key("selected_messages_count").format(count=len(self.checked_messages)))
+        self._selection_escape.setEnabled(self.selecting_messages and not self.deleting_selection)
+        self.cancel_message_selection.setEnabled(not self.deleting_selection)
+        self.delete_selected_messages.setEnabled(bool(self.checked_messages) and not self.deleting_selection)
+        self.items.setEnabled(not self.selecting_messages or not self.deleting_selection)
+
+    def _delete_selected_messages(self):
+        if not self.selecting_messages or self.deleting_selection:
+            return
+        selected = tuple(row_id for row_id in self.rows if row_id in self.checked_messages)
+        if not selected:
+            return
+        message = self.tr_key("delete_selected_messages_explain").format(count=len(selected))
+        if self._confirm("delete_selected_messages", message):
+            self.deleting_selection = True
+            self.feedback = ""
+            self._update_state()
+            self.bridge.submit("delete_received_messages", selected)
+
+    def _feedback_text(self):
+        if self.feedback != "bulk_delete_result":
+            return self.tr_key(self.feedback)
+        result = self.bulk_delete_result
+        parts = [self.tr_key("messages_deleted").format(count=result["removed"])]
+        if result["failed"]:
+            parts.append(self.tr_key("messages_delete_failed").format(count=result["failed"]))
+        if result["pending"]:
+            parts.append(self.tr_key("messages_delete_pending").format(count=result["pending"]))
+        return " ".join(parts)
 
     def _update_state(self):
         state = self.connection_state
@@ -565,9 +682,10 @@ class Window(QMainWindow):
         )
         feedback_color = self.colors.get(self.feedback_type, self.colors["secondary"])
         self.feedback_label.setStyleSheet(f"color: {feedback_color}; font-size: {self.body_pixels}px")
-        self.feedback_label.setText(self.tr_key(self.feedback))
+        self.feedback_label.setText(self._feedback_text())
         self.feedback_label.setVisible(bool(self.feedback))
         self._refresh_controls()
+        self._refresh_message_selection()
         self._show_detail()
 
     def _refresh_controls(self, *_):
@@ -770,6 +888,7 @@ class Window(QMainWindow):
         elif topic == "item":
             self._set_row(value)
         elif topic == "removed":
+            self.checked_messages.discard(value)
             if getattr(self, "_preview_key", None) and self._preview_key[0] == value:
                 self._preview_key = None
                 self._has_preview = False
@@ -780,6 +899,13 @@ class Window(QMainWindow):
                 self.items.takeTopLevelItem(self.items.indexOfTopLevelItem(row))
             self.items.setVisible(bool(self.rows))
             self.empty.setVisible(not self.rows)
+        elif topic == "bulk_delete_result":
+            self.deleting_selection = False
+            self.bulk_delete_result = value
+            self.feedback = topic
+            self.feedback_type = "danger" if value["failed"] or value["pending"] else "success"
+            if not value["failed"]:
+                self._set_message_selection(False)
         elif topic in {"error", "notice"}:
             self.feedback = value
             self.feedback_type = "danger" if topic == "error" else "success"
@@ -805,6 +931,8 @@ class Window(QMainWindow):
         else:
             item = existing[0]
         self.rows[row_id] = (item, event)
+        with QSignalBlocker(self.items):
+            self._apply_message_check(item, event)
         self._paint_row(item, event)
         self.items.show()
         self.empty.hide()
@@ -853,11 +981,13 @@ class Window(QMainWindow):
         dialog.deleteLater()
 
     def _open_details(self):
+        if self.selecting_messages:
+            return
         self.details_toggle.setChecked(True)
         self._toggle_details()
 
     def _show_detail(self):
-        if not self.details_toggle.isChecked():
+        if self.selecting_messages or not self.details_toggle.isChecked():
             return
         event = self._selected()
         self.detail_name.setText((event["name"] or self.tr_key("compose")) if event else self.tr_key("details_empty"))

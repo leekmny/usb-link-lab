@@ -69,6 +69,8 @@ status covers its separate authentication and protocol checks. A successful
 application handshake still requires the actual cable test to establish the
 physical result.
 
-## Delete a received message
+## Delete received messages
 
-In 0.2.1, select a completed received text message in Transfer history, choose Delete message in the details panel, and confirm to remove the record and saved body from this PC.
+In Transfer history, choose Select messages, check the completed received text messages to remove, then choose Delete selected messages and confirm the count. This removes the selected records and their saved bodies from this PC.
+
+To remove one message from its details, choose Delete message and confirm.

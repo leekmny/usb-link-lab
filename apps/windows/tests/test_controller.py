@@ -257,3 +257,51 @@ def test_worker_deletes_a_restored_received_message(tmp_path):
         assert not item.path.exists()
     finally:
         controller.shutdown()
+
+
+def test_worker_bulk_delete_continues_after_failed_item_and_reports_pending_cleanup(tmp_path, monkeypatch):
+    from hashlib import sha256
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "client"
+    store = Storage(root / "storage")
+
+    def commit(text, kind="text"):
+        payload = text.encode("utf-8")
+        draft = store.begin_receive(len(payload))
+        draft.write(payload)
+        return store.commit_receive(
+            draft, mode=Mode.AES256GCM, kind=kind, name="" if kind == "text" else "fixture.bin",
+            media_type="text/plain; charset=utf-8" if kind == "text" else "application/octet-stream",
+            size=len(payload), sha256=sha256(payload).hexdigest(),
+        )
+
+    removed, locked, attachment = commit("normal"), commit("cleanup pending"), commit("file", "file")
+    unlink = Path.unlink
+
+    def fail_locked_payload(path, *args, **kwargs):
+        if path.name == "content" and path.parent.name.endswith(locked.id):
+            raise PermissionError("fixture payload open")
+        return unlink(path, *args, **kwargs)
+
+    usb = SyntheticUSB(tmp_path / "peer", secrets.token_bytes(32))
+    controller = Controller(root, usb=usb)
+    events = []
+    controller.changed.connect(lambda name, value: events.append((name, value)))
+    controller.start()
+    try:
+        wait_for(lambda: ("connection", "select_device") in events)
+        with monkeypatch.context() as context:
+            context.setattr(Path, "unlink", fail_locked_payload)
+            ids = tuple("in:" + item.id for item in (attachment, removed, locked, removed))
+            controller.submit("delete_received_messages", ids)
+            wait_for(lambda: any(topic == "bulk_delete_result" for topic, _ in events))
+            assert ("bulk_delete_result", {"removed": 2, "pending": 1, "failed": 1}) in events
+            assert [value for topic, value in events if topic == "removed"] == list(ids[1:3])
+            assert [item.id for item in store.received()] == [attachment.id]
+            assert attachment.path.read_bytes() == b"file"
+        assert [item.id for item in Storage(root / "storage").received()] == [attachment.id]
+        assert not removed.path.parent.exists()
+        assert not locked.path.parent.exists()
+    finally:
+        controller.shutdown()

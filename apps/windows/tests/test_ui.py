@@ -245,3 +245,63 @@ def test_received_message_delete_requires_confirmation_and_clears_preview(tmp_pa
     assert not window.delete_message.isVisible()
     window.close()
     app.processEvents()
+
+
+def test_history_bulk_delete_selects_only_committed_messages(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QAbstractItemView
+
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    app.processEvents()
+    event = {
+        "direction": "incoming", "status": "complete", "mode": Mode.AES256GCM, "kind": "text",
+        "name": "", "size": 10, "transferred": 10, "path": tmp_path / "content", "text": "saved text",
+    }
+    ids = ("in:first", "in:second", "in:image", "sent", "in:active")
+    for row_id, changes in zip(ids, ({}, {}, {"kind": "image"}, {"direction": "outgoing"},
+                                    {"status": "receiving"})):
+        bridge.changed.emit("item", {**event, "id": row_id, **changes})
+
+    assert not window.select_messages.isVisible()
+    window.history.click()
+    window.items.setCurrentItem(window.rows["sent"][0])
+    window.select_messages.click()
+    assert window.selecting_messages
+    assert not window._send_shortcut.isEnabled()
+    assert not window.delete_selected_messages.isEnabled()
+    checkable = Qt.ItemFlag.ItemIsUserCheckable
+    assert [bool(window.rows[row_id][0].flags() & checkable) for row_id in ids] == [
+        True, True, False, False, False,
+    ]
+    first, second = (window.rows[row_id][0] for row_id in ids[:2])
+    window.items.setCurrentItem(first)
+    QTest.keyClick(window.items, Qt.Key.Key_Space)
+    second.setCheckState(0, Qt.CheckState.Checked)
+    assert first.checkState(0) == Qt.CheckState.Checked
+    assert window.delete_selected_messages.isEnabled()
+    assert "2" in window.selection_count.text()
+
+    monkeypatch.setattr(window, "_confirm", lambda *_: False)
+    window.delete_selected_messages.click()
+    assert bridge.commands == []
+    monkeypatch.setattr(window, "_confirm", lambda *_: True)
+    window.delete_selected_messages.click()
+    assert bridge.commands == [("delete_received_messages", ids[:2])]
+    assert not window.delete_selected_messages.isEnabled()
+
+    bridge.changed.emit("removed", ids[0])
+    bridge.changed.emit("bulk_delete_result", {"removed": 1, "pending": 0, "failed": 1})
+    assert window.selecting_messages
+    assert "1" in window.selection_count.text()
+    assert second.checkState(0) == Qt.CheckState.Checked
+    assert window.delete_selected_messages.isEnabled()
+
+    window.cancel_message_selection.click()
+    assert window.items.selectionMode() == QAbstractItemView.SelectionMode.SingleSelection
+    assert window._selected()["id"] == "sent"
+    assert window._send_shortcut.isEnabled()
+    assert all(not window.rows[row_id][0].flags() & checkable for row_id in ids[1:])
+    window.close()
+    app.processEvents()

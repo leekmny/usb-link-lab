@@ -534,16 +534,43 @@ class Controller(QObject):
         self.changed.emit("removed", row_id)
 
     async def _delete_received_message(self, row_id):
+        purged = await self._discard_received_message(row_id)
+        if purged is not None:
+            self.changed.emit("notice" if purged else "error",
+                              "message_deleted" if purged else "message_delete_pending")
+
+    async def _delete_received_messages(self, row_ids):
+        result = {"removed": 0, "pending": 0, "failed": 0}
+        seen = set()
+        for row_id in row_ids:
+            if not isinstance(row_id, str):
+                result["failed"] += 1
+                continue
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            try:
+                purged = await self._discard_received_message(row_id)
+            except (OSError, ValueError, RuntimeError):
+                result["failed"] += 1
+                continue
+            if purged is None:
+                result["failed"] += 1
+            else:
+                result["removed"] += 1
+                result["pending"] += not purged
+        self.changed.emit("bulk_delete_result", result)
+
+    async def _discard_received_message(self, row_id):
         if self.storage is None or not isinstance(row_id, str) or not row_id.startswith("in:"):
-            return
+            return None
         if row_id in self.deleting_messages:
-            return
+            return None
         self.deleting_messages.add(row_id)
         try:
             purged = await asyncio.to_thread(self.storage.delete_received_message, row_id.removeprefix("in:"))
             self.changed.emit("removed", row_id)
-            self.changed.emit("notice" if purged else "error",
-                              "message_deleted" if purged else "message_delete_pending")
+            return purged
         finally:
             self.deleting_messages.discard(row_id)
 
