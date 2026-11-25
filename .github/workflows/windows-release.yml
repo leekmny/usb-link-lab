@@ -1,0 +1,85 @@
+name: Windows prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Windows tag, for example windows-v0.1.0
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tag:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Check release tag name
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^windows-v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$') {
+            throw "Use an existing windows-vX.Y.Z tag."
+          }
+
+  build:
+    needs: verify-tag
+    uses: ./.github/workflows/windows.yml
+    with:
+      ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+
+  publish:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag) }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-portable
+          path: ${{ runner.temp }}/windows-portable
+      - name: Publish the tested Windows ZIP and verify release download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $Output = Join-Path $env:RUNNER_TEMP "windows-portable"
+          $Zip = Join-Path $Output "USBLinkLab-windows-x64.zip"
+          $Checksum = Join-Path $Output "SHA256SUMS"
+          $Staging = Join-Path $env:RUNNER_TEMP "release-review"
+          Expand-Archive -LiteralPath $Zip -DestinationPath $Staging
+          $Build = Get-Content -Raw -LiteralPath (Join-Path $Staging "USBLinkLab/BUILD-INFO.json") | ConvertFrom-Json
+          $Commit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $Build.source_commit -ne $Commit -or $Build.source_working_tree_dirty) {
+            throw "Artifact source does not match the clean tagged checkout."
+          }
+          $Notes = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          @(
+            "Native Windows x64 USBLinkLab portable prerelease.",
+            "",
+            "Source commit $Commit and contract $($Build.protocol_revision).",
+            "Executable signature status is $($Build.executable_signature).",
+            "The Windows package and automated checks passed. Physical iPhone USB interoperation is tracked separately in the project verification matrix.",
+            "Extract the ZIP and keep the bundled files together. Install the Microsoft Visual C++ x64 Redistributable if needed. Install Apple Devices separately and use the foreground companion app.",
+            "Verify the archive with SHA256SUMS. The archive includes Third-Party Notices and version-specific library source links."
+          ) | Set-Content -LiteralPath $Notes -Encoding UTF8
+          gh release create $env:RELEASE_TAG $Zip $Checksum --verify-tag --prerelease --title "USBLinkLab $env:RELEASE_TAG" --notes-file $Notes --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed." }
+
+          $Readback = Join-Path $env:RUNNER_TEMP "release-readback"
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $Readback --pattern USBLinkLab-windows-x64.zip --pattern SHA256SUMS
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release download failed." }
+          foreach ($Name in @("USBLinkLab-windows-x64.zip", "SHA256SUMS")) {
+            if ((Get-FileHash -LiteralPath (Join-Path $Readback $Name)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $Output $Name)).Hash) {
+              throw "Published $Name hash mismatch."
+            }
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json url,assets
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release status check failed." }
