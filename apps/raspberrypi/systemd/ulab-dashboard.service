@@ -1,0 +1,15 @@
+[Unit]
+Description=USBLinkLab local touchscreen dashboard
+After=graphical-session-pre.target
+
+[Service]
+ExecStart=/usr/bin/python3 -B /opt/ulab/dashboard.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=QT_QPA_PLATFORM=wayland
+Environment=QT_STYLE_OVERRIDE=Fusion
+
+[Install]
+WantedBy=default.target

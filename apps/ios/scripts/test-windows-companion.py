@@ -12,6 +12,24 @@ from pathlib import Path
 import sys
 
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def companion_connection(root):
+    if os.environ.get("ULAB_TEST_RELAY") == "1":
+        sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
+        from companion_relay import relay_connection
+        async with relay_connection(root) as pair:
+            yield pair
+    else:
+        reader, writer = await asyncio.open_connection("127.0.0.1", 43123)
+        try:
+            yield reader, writer
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
 async def exchange(root, psk, mode_type, session_type, storage_type):
     fixtures = json.loads((root / "fixtures.json").read_bytes())
     outgoing = fixtures["fromPython"]
@@ -39,31 +57,32 @@ async def exchange(root, psk, mode_type, session_type, storage_type):
             if sum(item.direction == "incoming" for item in completed) >= len(incoming):
                 received_all.set()
 
-    reader, writer = await asyncio.open_connection("127.0.0.1", 43123)
-    session = session_type(reader, writer, psk, storage, update, client=True)
+    async with companion_connection(root) as (reader, writer):
+        session = session_type(reader, writer, psk, storage, update, client=True)
 
-    async def send_and_drain():
-        await session.wait_ready()
-        for job in jobs:
-            await session.send(job)
-        await received_all.wait()
-        await session.request_drain()
+        async def send_and_drain():
+            await session.wait_ready()
+            for job in jobs:
+                await session.send(job)
+            await received_all.wait()
+            await session.request_drain()
 
-    runner = asyncio.create_task(session.run())
-    transfers = asyncio.create_task(send_and_drain())
-    try:
-        done, _ = await asyncio.wait({runner, transfers}, return_when=asyncio.FIRST_COMPLETED)
-        if runner in done:
-            runner.result()
-        await transfers
-        outcome = await runner
-        if outcome != "drained":
-            raise RuntimeError(f"Expected a coordinated drain, got {outcome!r}")
-    finally:
-        for task in (transfers, runner):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(transfers, runner, return_exceptions=True)
+        runner = asyncio.create_task(session.run())
+        transfers = asyncio.create_task(send_and_drain())
+        try:
+            done, _ = await asyncio.wait({runner, transfers}, return_when=asyncio.FIRST_COMPLETED)
+            if runner in done:
+                runner.result()
+            await transfers
+            outcome = await runner
+            if outcome != "drained":
+                raise RuntimeError(f"Expected a coordinated drain, got {outcome!r}")
+        finally:
+            for task in (transfers, runner):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(transfers, runner, return_exceptions=True)
+
 
     expected_events = Counter({
         ("outgoing", item["mode"], item["kind"]): 1 for item in outgoing
@@ -125,8 +144,7 @@ async def enroll(root, method, psk, mode_type, session_type, storage_type):
 
     storage = storage_type(root / "windows-enrollment-store")
     for initial in (True, False):
-        reader, writer = await asyncio.open_connection("127.0.0.1", 43123)
-        try:
+        async with companion_connection(root) as (reader, writer):
             if initial and method == "pin":
                 psk = await pin_pairing.pair_client(reader, writer, os.environ.pop("ULAB_TEST_PIN"))
             session = session_type(reader, writer, psk, storage, lambda _: None, client=True)
@@ -141,9 +159,6 @@ async def enroll(root, method, psk, mode_type, session_type, storage_type):
                 if not run.done():
                     run.cancel()
                 await asyncio.gather(run, return_exceptions=True)
-        finally:
-            writer.close()
-            await writer.wait_closed()
     print("Windows companion verified authenticated enrollment and saved-key reconnect.", flush=True)
 
 

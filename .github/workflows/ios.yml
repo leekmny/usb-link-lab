@@ -2,9 +2,12 @@ name: iPhone app
 
 on:
   push:
-    branches: [main, 'ios/**']
+    branches: [main, 'ios/**', 'integration/**']
     paths:
       - 'apps/ios/**'
+      - 'apps/windows/**'
+      - 'apps/raspberrypi/**'
+      - 'tools/companion_relay.py'
       - 'protocol/**'
       - 'tools/fixtures/**'
       - 'native/usb_pairing/**'
@@ -39,33 +42,17 @@ jobs:
           python tools/fixtures/generate_ulab1.py --check
       - name: Build the pinned native pairing bridge
         run: bash apps/ios/scripts/build-pairing-native.sh
-      - name: Run the Swift package tests
+      - name: Test integrated Swift and Python endpoints
+        env:
+          ULAB_WINDOWS_SOURCE: ${{ github.workspace }}/apps/windows
+          ULAB_NATIVE_TEST_LIBRARY: ${{ github.workspace }}/apps/ios/Generated/libulab_pairing_test.dylib
         run: |
+          export ULAB_PYTHON="$(command -v python)"
+          test -f "$ULAB_WINDOWS_SOURCE/usblinklab/session.py"
+          test -s "$ULAB_NATIVE_TEST_LIBRARY"
           xcodebuild -version
-          swift --version
           swift test --package-path apps/ios
-      - name: Exercise the Windows companion over local TCP
-        run: |
-          if [[ -f apps/windows/usblinklab/session.py ]]; then
-            windows="$GITHUB_WORKSPACE"
-          else
-            windows="$RUNNER_TEMP/windows-companion"
-            remote="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-            if git ls-remote --exit-code --refs "$remote" refs/heads/platform/windows >/dev/null; then
-              git clone --quiet --depth 1 --branch platform/windows "$remote" "$windows"
-            else
-              rc=$?
-              if [[ "$rc" == 2 ]]; then
-                echo "Windows companion branch is not published yet."
-                exit 0
-              fi
-              exit "$rc"
-            fi
-          fi
-          git -C "$windows" rev-parse HEAD
-          ULAB_WINDOWS_SOURCE="$windows/apps/windows" ULAB_PYTHON="$(command -v python)" \
-            ULAB_NATIVE_TEST_LIBRARY="$GITHUB_WORKSPACE/apps/ios/Generated/libulab_pairing_test.dylib" \
-            swift test --package-path apps/ios --filter CompanionInteropTests
+          ULAB_TEST_RELAY=1 swift test --package-path apps/ios --filter CompanionInteropTests
 
   device:
     name: Unsigned arm64 device artifact

@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>USBLinkLab · 패킷 캡처</title>
+<style>
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: USBLinkLab instrument · scope: app */
+/* Critique: the capture controls and actual link states share the first screen on a portrait Pi display. */
+:root {
+  color-scheme: light;
+  --paper:#fbfcfa; --surface:#fff; --ink:#142c25; --muted:#4b6258; --green:#064e3b;
+  --primary:#10583e; --press:#093b29; --pale:#e4f1e8; --line:#c9d6cc; --rule:#7c9787;
+  --error:#923c21; --warning:#fff0dc; --disabled:#e9ede9; --weak:#59655d; --focus:#0067a5;
+  --text: "Noto Sans CJK KR","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;
+  --mono: "DejaVu Sans Mono","Consolas","Noto Sans CJK KR",monospace;
+}
+* { box-sizing:border-box; }
+html, body { overflow-x:clip; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.5 var(--text); }
+[hidden] { display:none !important; }
+:focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
+header { border-bottom:1px solid var(--line); background:var(--surface); }
+.bar, main { max-width:850px; margin:auto; }
+.bar { display:flex; align-items:center; justify-content:space-between; padding:14px 30px; gap:8px; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:750; font-size:20px; }
+.mark { display:grid; place-items:center; background:var(--green); color:var(--surface);
+  width:34px; height:34px; border-radius:8px; font:700 20px var(--mono); }
+.host { color:var(--muted); font:14px var(--mono); }
+main { padding:26px 30px 42px; }
+h1,h2,h3,p,dl,dd,dt { margin:0; }
+h1,h2,h3 { min-width:0; overflow-wrap:break-word; }
+h1 { font-size:clamp(28px,4.8vw,39px); line-height:1.15; letter-spacing:-1px; }
+h2 { font-size:21px; }
+h3 { font-size:17px; }
+.title, .section-title, .history-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.title { margin:2px 0 21px; }
+.state { padding:5px 10px; border:1px solid var(--line); border-radius:5px; font-size:14px; color:var(--muted); }
+.state.on { color:var(--green); border-color:var(--rule); background:var(--pale); }
+.topology { display:grid; grid-template-columns:1fr 30px 1fr 30px 1fr; align-items:start; padding:17px 14px;
+  border:1px solid var(--line); background:var(--surface); border-radius:8px; }
+.node { text-align:center; min-width:0; }
+.node strong { display:block; font:650 17px var(--mono); color:var(--ink); }
+.node small { display:block; margin-top:4px; font-size:13px; color:var(--muted); }
+.wire { margin-top:10px; height:1px; background:var(--rule); }
+.panel { margin-top:25px; }
+.section-title { padding-bottom:9px; border-bottom:2px solid var(--green); }
+.section-title small, .sub, .empty, .note { font-size:14px; color:var(--muted); }
+form { margin-top:13px; }
+input,select,button,a.button { font:inherit; border-radius:6px; min-height:50px; }
+input,select { width:100%; background:var(--surface); border:1px solid var(--rule); color:var(--ink);
+  padding:8px 11px; }
+input:disabled,select:disabled { background:var(--disabled); }
+label.field { min-width:0; display:grid; align-content:start; gap:5px; font-weight:600; font-size:15px; }
+.fields { display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr); gap:10px; }
+#base { display:block; font:13px/1.45 var(--mono); margin:9px 0 2px; overflow-wrap:anywhere; }
+details { border-bottom:1px solid var(--line); }
+summary { cursor:pointer; min-height:50px; padding:13px 2px; color:var(--green); font-weight:600; }
+details[open] > summary { padding-bottom:8px; }
+details .field { margin:0 0 14px; }
+.check { display:flex; align-items:center; gap:9px; min-height:52px; font-size:14px; }
+.check input { min-height:24px; height:24px; width:24px; }
+.actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:13px; }
+button, a.button { display:inline-flex; align-items:center; justify-content:center; text-align:center;
+  white-space:nowrap;
+  padding:8px 16px; cursor:pointer; text-decoration:none; font-weight:650; border:1px solid var(--rule);
+  color:var(--green); background:var(--surface); }
+button:enabled:hover,a.button:hover { background:var(--pale); }
+button.primary { background:var(--primary); color:var(--surface); border-color:var(--primary); flex:1; }
+button.primary:enabled:hover { background:var(--press); }
+button:disabled { background:var(--disabled); color:var(--weak); border-color:var(--line); cursor:default; }
+#alert { padding:9px 12px; margin-top:10px; border-left:3px solid var(--rule); color:var(--green); background:var(--pale); overflow-wrap:anywhere; }
+#alert.bad { color:var(--error); background:var(--warning); border-color:var(--error); }
+.flow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:15px 0; }
+.flow dt, .sensors dt { color:var(--muted); font-size:14px; }
+.readout { font:600 clamp(20px,3.9vw,31px)/1.45 var(--mono); color:var(--green); overflow-wrap:anywhere; }
+.rate,.measure,.timestamp { font:13px/1.45 var(--mono); color:var(--muted); }
+.sensors { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:10px 0 15px; }
+.sensors dd { font:18px/1.6 var(--mono); color:var(--green); }
+.empty { padding:13px 0; }
+.record { border-bottom:1px solid var(--line); padding:12px 0; }
+.record h3 { margin-bottom:3px; }
+.record .actions { margin-top:8px; }
+.history-head { align-items:baseline; }
+.record small { font:13px var(--mono); color:var(--muted); }
+@media (max-width:500px) {
+  .bar { padding:11px 14px; } main { padding:19px 14px 32px; }
+  .fields { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .fields label:first-child { grid-column:1/-1; }
+  .topology { grid-template-columns:1fr 12px 1fr 12px 1fr; padding:13px 5px; }
+  .node strong { font-size:14px; } .node small { font-size:12px; }
+  .sensors { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .actions button,.actions a { padding:8px 10px; } .section-title small { text-align:right; }
+}
+</style>
+</head>
+<body>
+<header><div class="bar"><div class="brand"><span class="mark" aria-hidden="true">&gt;_</span>USBLinkLab</div><span class="host">Raspberry Pi 5</span></div></header>
+<main>
+<div class="title"><h1>패킷 캡처</h1><span class="state" id="state">상태 확인 중</span></div>
+<div class="topology" aria-label="유선 연결 상태">
+  <div class="node"><strong>Windows</strong><small>USB 링크 <b id="gadget">미확인</b></small></div><div class="wire"></div>
+  <div class="node"><strong>Pi relay</strong><small>중계 <b id="relay">미확인</b></small></div><div class="wire"></div>
+  <div class="node"><strong>iPhone</strong><small>USB 인식 <b id="iphone">미확인</b></small></div>
+</div>
+<noscript><p>이 화면의 상태 조회와 캡처 제어에는 JavaScript가 필요합니다.</p></noscript>
+<section class="panel" aria-labelledby="control-title">
+<div class="section-title"><h2 id="control-title">캡처 설정</h2><small id="space">남은 공간 미확인</small></div>
+<form id="form">
+<div class="fields">
+  <label class="field">관측 지점<select id="layer" disabled><option value="">장치 확인 중</option></select></label>
+  <label class="field">시간 (초)<input id="seconds" type="number" inputmode="numeric" min="1" max="120" value="30" required></label>
+  <label class="field">용량 (MiB)<input id="mib" type="number" inputmode="numeric" min="1" max="32" value="8" required></label>
+</div>
+<label class="check" id="private-row" hidden><input id="private" type="checkbox">선택한 iPhone의 비공개 USB 진단 캡처에 동의합니다.</label>
+<details id="filters"><summary>캡처 필터</summary><span class="sub">기본 범위</span><code id="base">미확인</code>
+<label class="field">추가 조건<input id="filter" type="text" maxlength="160" autocomplete="off" placeholder="예: tcp port 43123"></label></details>
+<div class="actions"><button class="primary" id="start" type="submit" disabled>캡처 시작</button><button id="stop" type="button" disabled>선택 지점 중지</button>
+<button id="live" type="button" disabled>Pi에서 실시간 보기</button></div>
+</form>
+<p id="alert" role="status" hidden></p>
+</section>
+<section class="panel" aria-labelledby="traffic-title"><div class="section-title"><h2 id="traffic-title">중계 트래픽</h2><small>프로세스 누적</small></div>
+<dl class="flow"><div><dt>Windows → iPhone</dt><dd class="readout" id="out">미확인</dd><dd class="rate" id="out-rate">미확인</dd></div>
+<div><dt>iPhone → Windows</dt><dd class="readout" id="in">미확인</dd><dd class="rate" id="in-rate">미확인</dd></div></dl>
+<details><summary>Pi 상태와 진단</summary><dl class="sensors">
+<div><dt>CPU 온도</dt><dd id="temperature">미확인</dd></div><div><dt>메모리 사용률</dt><dd id="memory">미확인</dd></div><div><dt>스로틀링 비트</dt><dd id="throttled">미확인</dd></div>
+<div><dt>마지막 중계 결과</dt><dd id="last">미확인</dd></div><div><dt>USB 멀티플렉서</dt><dd id="mux">미확인</dd></div><div><dt>상태 갱신</dt><dd id="updated">미확인</dd></div></dl></details>
+</section>
+<section class="panel" aria-labelledby="files-title"><div class="section-title"><h2 id="files-title">캡처 기록</h2><small>.pcapng</small></div>
+<p class="empty" id="empty">기록 확인 중</p><div id="history"></div></section>
+</main>
+<script>
+"use strict";
+const el = id => document.getElementById(id);
+const layers = {gadget:"Windows USB",loopback:"Pi 루프백",usbmon:"iPhone USB 호스트"};
+const results = {complete:"저장됨",capturing:"수집 중",capture_error:"캡처 오류",interrupted:"중단됨"};
+const relayNames = {listening:"대기",connected:"연결 중",connecting:"연결 시도",stopping:"종료 중"};
+const endNames = {closed:"종료",cancelled:"취소",upstream_unavailable:"프록시 대기",transport_error:"연결 오류",progress_timeout:"시간 초과"};
+let data = null, busy = false, fetching = false, previous = null, rates = [null,null], key = "";
+const rows = new Map();
+const finite = value => typeof value === "number" && Number.isFinite(value);
+function bytes(x) {
+  if (!finite(x) || x < 0) return "미확인";
+  const units = ["B","KiB","MiB","GiB","TiB"];
+  let value = x, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+  return value.toLocaleString("en-US",{maximumFractionDigits:unit ? 1 : 0}) + " " + units[unit];
+}
+function clock(value) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "미확인";
+  return new Date(value).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
+}
+function binary(value, yes, no) { return value === true ? yes : value === false ? no : "미확인"; }
+function message(text, bad=false) {
+  const box=el("alert"); box.textContent=text; box.hidden=!text; box.classList.toggle("bad",bad);
+}
+function controls() {
+  const cap=data?.capture, list=cap?.interfaces || {}, layer=el("layer").value;
+  const exists=Object.hasOwn(list,layer), valid=!!(data?.token && exists && !busy);
+  const active = cap?.active || [];
+  const chosenActive=(cap?.captures || []).find(c => c.layer===layer && active.includes(c.id));
+  const privateRequired=layer==="usbmon";
+  el("private-row").hidden=!privateRequired;
+  el("seconds").max=privateRequired ? "30" : "120";
+  el("base").textContent=list[layer]?.filter || "미확인";
+  el("start").disabled=!valid || !!chosenActive || (privateRequired && !el("private").checked);
+  el("stop").disabled=!valid || !chosenActive;
+  el("stop").dataset.id=chosenActive?.id || "";
+  el("live").disabled=!valid || !data?.local_display || privateRequired || !!el("filter").value.trim();
+  el("live").title=el("filter").value.trim() ? "추가 필터는 파일로 저장하는 캡처에 적용됩니다." : "";
+  el("layer").disabled=!data || Object.keys(list).length===0 || busy;
+}
+function refreshLayers(interfaces) {
+  const valid=Object.keys(layers).filter(k => interfaces && Object.hasOwn(interfaces,k));
+  const newKey=valid.map(k => k+":"+interfaces[k].interface).join(",");
+  if (newKey!==key || !el("layer").options.length || (!valid.length && el("layer").value==="")) {
+    const select=el("layer"), old=select.value;
+    select.replaceChildren(...valid.map(k => new Option(layers[k]+" ("+interfaces[k].interface+")",k)));
+    if (!valid.length) select.add(new Option("사용 가능한 지점 없음",""));
+    if (valid.includes(old)) select.value=old;
+    key=newKey;
+  }
+}
+function record(c) {
+  let row=rows.get(c.id);
+  if (!row) {
+    const root=document.createElement("article"); root.className="record";
+    root.innerHTML='<div class="history-head"><h3></h3><small></small></div><p class="sub"></p><div class="actions"><button type="button" data-stop>이 캡처 중지</button><a class="button" download>다운로드</a><button type="button" data-open>Pi에서 열기</button></div>';
+    row={root, title:root.querySelector("h3"),time:root.querySelector("small"),info:root.querySelector("p"),
+      save:root.querySelector("a"),open:root.querySelector("[data-open]"),stop:root.querySelector("[data-stop]")};
+    row.open.onclick=() => act("open",{id:c.id}); row.stop.onclick=() => act("stop",{id:c.id});
+    row.save.href="/download/"+c.id; rows.set(c.id,row);
+  }
+  row.title.textContent=(layers[c.layer] || "캡처")+" / "+(results[c.result] || "상태 미확인");
+  const date=Date.parse(c.started_utc);
+  row.time.textContent=(Number.isFinite(date)
+    ? new Date(date).toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"})+" "+clock(c.started_utc)
+    : "시간 미확인")+" / "+c.id.slice(0,6);
+  row.info.textContent=bytes(c.size)+"   /   패킷 "+(finite(c.packets)?c.packets.toLocaleString():"미확인")+"   /   드롭 "+(finite(c.dropped)?c.dropped.toLocaleString():"미확인");
+  const active=(data?.capture?.active || []).includes(c.id);
+  const saved=!active && c.result==="complete";
+  row.stop.hidden=!active; row.stop.disabled=busy; row.save.hidden=!saved;
+  row.open.hidden=!saved || !data?.local_display; row.open.disabled=busy;
+  return row.root;
+}
+function render() {
+  const cap=data?.capture?.unavailable ? null : data?.capture, h=data?.health || {}, r=data?.relay || {};
+  el("state").textContent=!data ? "상태 조회 불가" : !cap ? "캡처 서비스 대기" : cap.active?.length ? "캡처 중" : "캡처 대기";
+  el("state").classList.toggle("on",!!cap?.active?.length);
+  el("gadget").textContent=binary(h.gadget_up,"연결","끊김");
+  el("iphone").textContent=binary(h.iphone_usb,"있음","없음");
+  el("relay").textContent=relayNames[r.state] || (h.service==="inactive" ? "중지" : "미확인");
+  el("temperature").textContent=finite(h.temperature) ? h.temperature.toFixed(1)+" °C" : "미확인";
+  el("memory").textContent=finite(h.memory_percent) ? h.memory_percent.toFixed(0)+" %" : "미확인";
+  el("throttled").textContent=typeof h.throttled==="string" ? h.throttled.replace(/^throttled=/,"") : finite(h.throttled) ? "0x"+h.throttled.toString(16) : "미확인";
+  el("mux").textContent=binary(h.iphone_mux,"사용 가능","미확인");
+  el("space").textContent="남은 공간 "+bytes(cap?.free);
+  el("last").textContent=endNames[r.last_result] || "미확인";
+  el("updated").textContent=clock(r.updated_utc);
+  const now=Date.parse(r.updated_utc), counts=[r.bytes_windows_to_iphone,r.bytes_iphone_to_windows];
+  if (!Number.isFinite(now) || !counts.every(finite)) {previous=null; rates=[null,null];}
+  else if (!previous || previous.time!==now) {
+    const duration=previous ? (now-previous.time)/1000 : 0;
+    rates=counts.map((n,i) => duration>0 && duration<=10 && n>=previous.counts[i] ? (n-previous.counts[i])/duration : null);
+    previous={time:now,counts};
+  }
+  ["out","in"].forEach((id,i) => {
+    el(id).textContent=bytes(counts[i]); el(id+"-rate").textContent=finite(rates[i]) ? bytes(rates[i])+"/s" : "미확인";
+  });
+  refreshLayers(cap?.interfaces); controls();
+  const list=(cap?.captures || []).filter(c => /^[a-f0-9]{32}$/.test(c.id));
+  const ids=new Set(list.map(c => c.id));
+  for (const [id,row] of rows) if (!ids.has(id)) {row.root.remove(); rows.delete(id);}
+  const history=el("history");
+  list.forEach((c,i) => {
+    const node=record(c);
+    if (history.children[i]!==node) history.insertBefore(node,history.children[i] || null);
+  });
+  el("empty").hidden=!!list.length;
+  el("empty").textContent=cap ? "저장된 캡처가 없습니다." : "캡처 서비스 연결을 기다립니다.";
+}
+async function refresh() {
+  if(fetching) return;
+  fetching=true;
+  try {
+    const response=await fetch("/api/status",{cache:"no-store",signal:AbortSignal.timeout(5000)});
+    if(!response.ok) throw Error("상태 조회 실패");
+    data=await response.json();
+  } catch { data=null; }
+  finally { fetching=false; render(); }
+}
+async function act(action,payload) {
+  if (!data?.token || busy) return;
+  busy=true; render(); message("");
+  try {
+    const response=await fetch("/api/"+action,{method:"POST",headers:{"Content-Type":"application/json","X-ULAB-Token":data.token},
+      body:JSON.stringify(payload),signal:AbortSignal.timeout(10000)});
+    const body=await response.json();
+    if (!response.ok || body.ok===false || body.error) throw Error(String(body.error || response.status));
+    message(({start:"캡처 시작을 요청했습니다.",stop:"캡처 중지를 요청했습니다.",open:"Pi에서 파일 열기를 요청했습니다.",live:"Pi에서 실시간 보기를 요청했습니다."})[action]);
+  } catch(error) { message("요청을 완료하지 못했습니다. "+error.message,true); }
+  finally { busy=false; await refresh(); controls(); }
+}
+function limits() { return {layer:el("layer").value, seconds:el("seconds").valueAsNumber, mib:el("mib").valueAsNumber}; }
+el("form").onsubmit=e => {
+  e.preventDefault();
+  if (!el("start").disabled && el("form").reportValidity())
+    act("start",{...limits(),filter:el("filter").value.trim(),private:el("layer").value==="usbmon" && el("private").checked});
+};
+el("layer").onchange=() => {el("private").checked=false; controls();};
+el("private").onchange=controls;
+el("filter").oninput=controls;
+el("stop").onclick=() => act("stop",{id:el("stop").dataset.id});
+el("live").onclick=() => {if(el("form").reportValidity()) act("live",limits());};
+refresh(); setInterval(refresh,2400);
+</script>
+</body></html>

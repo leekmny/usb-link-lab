@@ -1,0 +1,28 @@
+[Unit]
+Description=USBLinkLab bounded capture broker
+After=network.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/python3 -B /opt/ulab/capture/ulab_capture.py serve
+User=ulab-capture
+Group=ulab-capture
+StateDirectory=ulab-capture
+StateDirectoryMode=0750
+RuntimeDirectory=ulab-capture
+RuntimeDirectoryMode=0750
+UMask=0027
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_PACKET AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

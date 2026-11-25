@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=USBLinkLab Capture
+Name[ko]=USBLinkLab 패킷 캡처
+Comment=Inspect the Pi USB relay and control Wireshark captures
+Comment[ko]=Pi의 USB 연결 상태를 확인하고 패킷 캡처를 제어합니다
+Exec=@LAUNCHER@
+Icon=@ICON@
+Terminal=false
+StartupNotify=true
+Categories=Education;Network;
