@@ -2,9 +2,7 @@
 """Local touchscreen dashboard. Capture privileges live in a separate Unix-socket service."""
 import argparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import ipaddress
 import json
-import mimetypes
 import os
 from pathlib import Path
 import secrets
@@ -85,7 +83,7 @@ def open_gui(action, req):
     if not graphical():
         raise ValueError("Pi desktop session is unavailable")
     lua = "/opt/ulab/dissectors/ulab.lua"
-    base = ["wireshark","-X","lua_script:"+lua]
+    base = ["wireshark","--fullscreen","-X","lua_script:"+lua]
     with GUI_LOCK:
         if gui_process is not None and gui_process.poll() is None:
             raise ValueError("Wireshark is already open on the Pi display")
@@ -94,7 +92,8 @@ def open_gui(action, req):
             item = next((r for r in cap.request_ctl({"action":"list"})["captures"] if r["id"]==sid),None)
             if not item or item["result"]!="complete":
                 raise ValueError("capture is not complete")
-            gui_process = subprocess.Popen(base+["-r",str(cap.STATE/(sid+".pcapng"))],start_new_session=True)
+            view = [] if item["layer"] == "usbmon" else ["-J", "ulab.frame_type == 3"]
+            gui_process = subprocess.Popen(base+view+["-r",str(cap.STATE/(sid+".pcapng"))],start_new_session=True)
         else:
             # The live file is also retained by the bounded capture service.
             layer = req.get("layer","gadget")

@@ -4,6 +4,10 @@ on:
   push:
     paths:
       - apps/windows/**
+      - apps/raspberrypi/**
+      - capture/**
+      - evidence/hardware/**
+      - docs/acceptance.md
       - native/usb_pairing/**
       - protocol/**
       - .github/workflows/windows*.yml

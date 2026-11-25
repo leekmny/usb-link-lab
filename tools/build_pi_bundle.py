@@ -1,5 +1,6 @@
 """Create an explicit source-only Raspberry Pi deployment bundle with byte-level checksums."""
 import argparse
+import gzip
 import hashlib
 import io
 from pathlib import Path
@@ -15,7 +16,7 @@ def build(dest, revision):
                    if p.is_file() and "__pycache__" not in p.parts and not any(part.startswith(".") for part in p.relative_to(ROOT).parts) and p.suffix in
                    (".py",".sh",".service",".ps1",".html",".svg",".png",".desktop",".in",".lua",".md",".css",".js"))
     hashes = []
-    with tarfile.open(dest, "x:gz") as tf:
+    with dest.open("xb") as raw, gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as zipped, tarfile.open(fileobj=zipped, mode="w") as tf:
         def add(rel, data, mode=0o644):
             entry = tarfile.TarInfo(rel)
             entry.mode, entry.size = mode, len(data)

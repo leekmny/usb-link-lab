@@ -31,7 +31,14 @@ jobs:
       - name: Test relay, capture policy and dissector
         run: |
           tshark -v
-          python -m unittest discover -s tests -v
+          ULAB_RUN_LIVE_CAPTURE=1 python -m unittest discover -s tests -v
+      - name: Check touchscreen controls in a browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ulab-ui-test" --no-audit --no-fund --ignore-scripts playwright-core@1.56.1
+          export PLAYWRIGHT_CORE="$RUNNER_TEMP/ulab-ui-test/node_modules/playwright-core"
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          test -x "$CHROMIUM_PATH"
+          node tests/test_dashboard_touch.cjs
       - name: Capture a real loopback exchange with synthetic data
         run: python tools/relay_experiment.py --out evidence/ci-loopback
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f

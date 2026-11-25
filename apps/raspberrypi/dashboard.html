@@ -1,7 +1,8 @@
 <!doctype html>
-<html lang="ko">
+<html lang="ko" translate="no">
 <head>
 <meta charset="utf-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>USBLinkLab · 패킷 캡처</title>
@@ -84,6 +85,12 @@ button:disabled { background:var(--disabled); color:var(--weak); border-color:va
 .record .actions { margin-top:8px; }
 .history-head { align-items:baseline; }
 .record small { font:13px var(--mono); color:var(--muted); }
+.observation { border:0; }
+.observation table { width:100%; border-collapse:collapse; margin:7px 0; font-size:14px; }
+.observation th,.observation td { padding:5px; border-bottom:1px solid var(--line); text-align:right; }
+.observation th:first-child,.observation td:first-child { text-align:left; }
+.observation td { font-variant-numeric:tabular-nums; }
+.observation ul { margin:6px 0 12px; padding-left:20px; font-size:13px; color:var(--muted); }
 @media (max-width:500px) {
   .bar { padding:11px 14px; } main { padding:19px 14px 32px; }
   .fields { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
@@ -183,17 +190,59 @@ function refreshLayers(interfaces) {
     key=newKey;
   }
 }
+const modeNames = ["평문","AES-GCM","ChaCha20-Poly1305","HMAC-SHA256"];
+const observeNames = {pending:"캡처 파일 분석 중",no_frames:"식별된 ULAB 프레임 없음",partial:"일부만 판독됨",
+  limited:"분석 한도 도달",unavailable:"분석 결과 없음",unsupported:"USB 호스트 캡처",interrupted:"캡처 중단으로 집계 미완료"};
+function showObservation(row, c) {
+  const obs=c.observation, signature=JSON.stringify(obs || null);
+  row.detail.hidden=!obs;
+  if (!obs || row.signature===signature) return;
+  row.signature=signature;
+  const box=row.detail.querySelector("div");
+  box.replaceChildren();
+  const note=document.createElement("p");
+  note.className="note";
+  note.textContent=(observeNames[obs.status] ? observeNames[obs.status]+" · " : "")+"관측된 프레임 · 인증 미검증";
+  box.append(note);
+  if (!Array.isArray(obs.frames) || obs.frames.length!==4) return;
+  const table=document.createElement("table"), head=table.createTHead().insertRow();
+  for(const text of ["모드","PC → iPhone","iPhone → PC"]) {
+    const th=document.createElement("th"); th.scope="col"; th.textContent=text; head.append(th);
+  }
+  const body=table.createTBody();
+  obs.frames.forEach((counts,m) => {
+    const line=body.insertRow(), name=document.createElement("th"); name.scope="row";
+    name.textContent=modeNames[m]; line.append(name);
+    for (const d of ["c2s","s2c"]) line.insertCell().textContent=finite(counts?.[d]) ? counts[d].toLocaleString() : "미확인";
+  });
+  box.append(table);
+  if (!obs.items?.length) return;
+  const label=document.createElement("p"); label.className="note"; label.textContent="최근 전송 항목 · 관측된 DATA 크기";
+  const items=document.createElement("ul");
+  for (const item of obs.items.slice(0,6)) {
+    const li=document.createElement("li");
+    const ts=finite(item.unix_ms) ? new Date(item.unix_ms).toLocaleTimeString("ko-KR",{hour12:false}) : "시각 미확인";
+    li.textContent=[ts,item.direction==="c2s" ? "PC → iPhone" : "iPhone → PC",
+      modeNames[item.mode],bytes(item.data_bytes),item.end_seen ? "END 관측" : "END 미관측"].join(" · ");
+    items.append(li);
+  }
+  box.append(label,items);
+}
 function record(c) {
   let row=rows.get(c.id);
   if (!row) {
     const root=document.createElement("article"); root.className="record";
     root.innerHTML='<div class="history-head"><h3></h3><small></small></div><p class="sub"></p><div class="actions"><button type="button" data-stop>이 캡처 중지</button><a class="button" download>다운로드</a><button type="button" data-open>Pi에서 열기</button></div>';
-    row={root, title:root.querySelector("h3"),time:root.querySelector("small"),info:root.querySelector("p"),
+    const detail=document.createElement("details"); detail.className="observation";
+    detail.innerHTML="<summary>프로토콜 관측</summary><div></div>"; root.append(detail);
+    row={root, detail, title:root.querySelector("h3"),time:root.querySelector("small"),info:root.querySelector("p"),
       save:root.querySelector("a"),open:root.querySelector("[data-open]"),stop:root.querySelector("[data-stop]")};
     row.open.onclick=() => act("open",{id:c.id}); row.stop.onclick=() => act("stop",{id:c.id});
     row.save.href="/download/"+c.id; rows.set(c.id,row);
   }
-  row.title.textContent=(layers[c.layer] || "캡처")+" / "+(results[c.result] || "상태 미확인");
+  const result=c.result==="complete" && c.completion_reason==="user_stopped" ? "수동 중지 · 저장됨" : results[c.result];
+  row.title.textContent=(layers[c.layer] || "캡처")+" / "+(result || "상태 미확인");
+  showObservation(row,c);
   const date=Date.parse(c.started_utc);
   row.time.textContent=(Number.isFinite(date)
     ? new Date(date).toLocaleDateString("ko-KR",{month:"numeric",day:"numeric"})+" "+clock(c.started_utc)
