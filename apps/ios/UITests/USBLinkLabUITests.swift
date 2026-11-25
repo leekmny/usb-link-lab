@@ -87,12 +87,21 @@ final class USBLinkLabUITests: XCTestCase {
     }
 
     func testConfirmOrCancelReceivedMessageDeletion() {
-        let app = start("received")
+        assertConfirmOrCancelMessageDeletion(in: "received")
+    }
+
+    func testConfirmOrCancelSentMessageDeletion() {
+        assertConfirmOrCancelMessageDeletion(in: "sent")
+    }
+
+    private func assertConfirmOrCancelMessageDeletion(in state: String) {
+        let app = start(state)
         app.tabBars.buttons["기록"].tap()
         let row = app.buttons["item-completed"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["select-history-messages"].exists)
         row.tap()
-        let delete = app.buttons["delete-received-message"]
+        let delete = app.buttons["delete-message"]
         if !delete.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(delete.isHittable)
         delete.tap()
@@ -106,8 +115,8 @@ final class USBLinkLabUITests: XCTestCase {
         XCTAssertFalse(row.exists)
     }
 
-    func testDeleteSelectedReceivedMessagesFromHistory() {
-        let app = start("received-multiple")
+    func testDeleteSelectedSentAndReceivedMessagesFromHistory() {
+        let app = start("mixed-message-history")
         app.tabBars.buttons["기록"].tap()
         let select = app.buttons["select-history-messages"]
         XCTAssertTrue(select.waitForExistence(timeout: 10))
@@ -115,10 +124,10 @@ final class USBLinkLabUITests: XCTestCase {
 
         let delete = app.buttons["delete-selected-messages"]
         XCTAssertFalse(delete.isEnabled)
-        let selectable = app.buttons.matching(identifier: "select-received-message")
-        XCTAssertEqual(selectable.count, 3)
+        let selectable = app.buttons.matching(identifier: "select-message")
+        XCTAssertEqual(selectable.count, 4)
         let first = selectable.matching(NSPredicate(format: "label CONTAINS %@", "message-alpha.txt")).firstMatch
-        let second = selectable.matching(NSPredicate(format: "label CONTAINS %@", "message-beta.txt")).firstMatch
+        let second = selectable.matching(NSPredicate(format: "label CONTAINS %@", "sent-message.txt")).firstMatch
         XCTAssertTrue(first.exists)
         first.tap()
         XCTAssertTrue(first.isSelected)
@@ -146,12 +155,13 @@ final class USBLinkLabUITests: XCTestCase {
         XCTAssertTrue(select.waitForExistence(timeout: 5))
         XCTAssertFalse(count.exists)
         let records = app.buttons.matching(identifier: "item-completed")
-        for name in ["message-alpha.txt", "message-beta.txt"] {
+        for name in ["message-alpha.txt", "sent-message.txt"] {
             XCTAssertFalse(records.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists)
         }
-        for name in ["message-gamma.txt", "received-note.txt", "sent-message.txt"] {
+        for name in ["message-beta.txt", "message-gamma.txt", "received-note.txt"] {
             XCTAssertTrue(records.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists, name)
         }
+        XCTAssertTrue(app.buttons["item-sending"].exists)
     }
 
     private func start(_ state: String, dark: Bool = false, accessible: Bool = false) -> XCUIApplication {

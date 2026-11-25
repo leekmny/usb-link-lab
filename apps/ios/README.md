@@ -11,7 +11,7 @@ USBLinkLab is a paired Windows and iPhone application for evaluating message and
 
 The mode is frozen at enqueue. A complete delivery requires the receiver's durable save followed by its authenticated acknowledgment. The experimental protocol has no forward secrecy. Saved files, exports and screenshots have separate protection properties.
 
-Open a received text item in History and select Delete message to remove a single local copy. To remove several, choose Select in History, mark the received messages, select Delete selected, and confirm the count.
+Open a completed sent or received text message in History and choose Delete message to remove its local copy. To remove several, choose Select in History, mark the messages, choose Delete selected messages, and confirm the count.
 
 ## Reconnect over USB
 

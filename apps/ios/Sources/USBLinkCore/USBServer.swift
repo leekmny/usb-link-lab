@@ -563,34 +563,53 @@ public actor USBServer {
     }
 
     public func deleteReceivedMessages(_ ids: Set<UUID>) throws {
-        guard !ids.isEmpty else { throw SessionFault.invalidState }
-        if let activeID = session?.incoming?.local, ids.contains(activeID) { throw SessionFault.invalidState }
-        let eligible = Set(journal.entries.lazy.filter {
-            ids.contains($0.id) && $0.direction == .incoming && $0.state == .completed
-                && $0.metadata?.kind == .text && self.receivedFiles[$0.id] != nil
-        }.map(\.id))
-        guard eligible == ids else { throw SessionFault.invalidState }
+        try deleteMessages(ids, direction: .incoming)
+    }
+
+    public func deleteMessages(_ ids: Set<UUID>) throws {
+        try deleteMessages(ids, direction: nil)
+    }
+
+    private func deleteMessages(_ ids: Set<UUID>, direction: TransferDirection?) throws {
+        let active = [session?.incoming?.local, session?.outgoing?.local].compactMap { $0 }
+        guard !ids.isEmpty, ids.isDisjoint(with: active) else { throw SessionFault.invalidState }
+
+        let selected = journal.entries.filter { ids.contains($0.id) }
+        guard selected.count == ids.count, Set(selected.map(\.id)) == ids,
+              selected.allSatisfy({ row in
+                  (direction == nil || row.direction == direction) && row.state == .completed
+                      && row.metadata?.kind == .text
+                      && (row.direction == .outgoing || receivedFiles[row.id] != nil)
+              }) else { throw SessionFault.invalidState }
 
         let previous = journal
-        var pending = (previous.removingReceived ?? []).union(ids)
-        journal.removingReceived = pending
-        journal.entries.removeAll { $0.direction == .incoming && ids.contains($0.id) }
+        let incoming = selected.filter { $0.direction == .incoming }.map(\.id)
+        var pending = (previous.removingReceived ?? []).union(incoming)
+        journal.removingReceived = pending.isEmpty ? nil : pending
+        journal.entries.removeAll { ids.contains($0.id) }
         do { try persist() } catch { journal = previous; throw error }
         defer { publish() }
 
-        for id in ids {
-            receivedFiles.removeValue(forKey: id)
+        var cleanupFailed = false
+        for row in selected {
             do {
-                try store.removeReceived(id)
-                pending.remove(id)
+                if row.direction == .incoming {
+                    receivedFiles.removeValue(forKey: row.id)
+                    try store.removeReceived(row.id)
+                    pending.remove(row.id)
+                } else {
+                    try store.removeOutgoing(row.id)
+                }
             } catch {
-                // Keep the marker until a later launch can finish disk cleanup.
+                // On launch, incoming markers and outgoing pruning finish any pending cleanup.
+                cleanupFailed = true
             }
         }
-        journal.removingReceived = pending.isEmpty ? nil : pending
-        // A failed cleanup write leaves durable markers for the next launch.
-        try? persist()
-        guard pending.isDisjoint(with: ids) else { throw SessionFault.storage }
+        if !incoming.isEmpty {
+            journal.removingReceived = pending.isEmpty ? nil : pending
+            try? persist()
+        }
+        guard !cleanupFailed else { throw SessionFault.storage }
     }
 
     public func removeQueued(_ id: UUID) throws {

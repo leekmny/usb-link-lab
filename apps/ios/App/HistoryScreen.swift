@@ -11,7 +11,7 @@ struct HistoryScreen: View {
     @State private var confirmingDeletion = false
 
     private var eligibleIDs: Set<UUID> {
-        Set(model.items.lazy.filter(\.canDeleteReceivedMessage).map(\.id))
+        Set(model.items.lazy.filter(\.canDeleteMessage).map(\.id))
     }
 
     private var selection: Set<UUID> { selectedIDs.intersection(eligibleIDs) }
@@ -72,7 +72,7 @@ struct HistoryScreen: View {
                 let ids = confirmedIDs
                 confirmedIDs.removeAll()
                 Task {
-                    if await model.deleteReceivedMessages(ids) { endSelection() }
+                    if await model.deleteMessages(ids) { endSelection() }
                 }
             }
             Button(language.text(.cancel), role: .cancel) { confirmedIDs.removeAll() }
@@ -85,7 +85,7 @@ struct HistoryScreen: View {
     private func historyRow(_ item: LabItem) -> some View {
         if !selecting {
             TransferRowLink(item: item, language: language)
-        } else if item.canDeleteReceivedMessage {
+        } else if item.canDeleteMessage {
             let selected = selectedIDs.contains(item.id)
             Button {
                 if selected {
@@ -98,7 +98,7 @@ struct HistoryScreen: View {
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityIdentifier("select-received-message")
+            .accessibilityIdentifier("select-message")
             .disabled(model.busy)
         } else {
             TransferRowLabel(item: item, language: language, accessory: .none)
@@ -360,7 +360,7 @@ struct ItemDetail: View {
         .alert(language.text(.confirmDeleteMessage), isPresented: $deletingMessage) {
             Button(language.text(.deleteMessage), role: .destructive) {
                 Task {
-                    if await model.deleteReceivedMessage(id) { dismiss() }
+                    if await model.deleteMessages([id]) { dismiss() }
                 }
             }
             Button(language.text(.cancel), role: .cancel) {}
@@ -483,13 +483,13 @@ struct ItemDetail: View {
             }
             .buttonStyle(LabPrimaryButton())
             .disabled(model.busy || !model.connection.paired)
-        } else if item.canDeleteReceivedMessage {
+        } else if item.canDeleteMessage {
             Button(role: .destructive) { deletingMessage = true } label: {
                 Label(language.text(.deleteMessage), systemImage: "trash")
             }
             .buttonStyle(LabFieldButton())
             .disabled(model.busy)
-            .accessibilityIdentifier("delete-received-message")
+            .accessibilityIdentifier("delete-message")
         } else if item.downloadable {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {

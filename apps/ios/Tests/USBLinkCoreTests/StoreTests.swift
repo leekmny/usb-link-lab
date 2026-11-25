@@ -216,6 +216,49 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: secondFile.path))
     }
 
+    func testMixedDeletionRemovesCompletedSentAndReceivedMessagesAcrossRelaunch() async throws {
+        let sent = UUID()
+        let received = UUID()
+        let queued = UUID()
+        let kept = UUID()
+        let receivedBody = try commitMessage(received)
+        let outgoing: [(UUID, TransferState)] = [(sent, .completed), (queued, .queued), (kept, .completed)]
+        var journal = QueueJournal()
+        for (id, state) in outgoing {
+            let metadata = try store.stageText("staged message", id: id)
+            journal.entries.append(JournalEntry(id: id, direction: .outgoing, mode: .aes256GCM,
+                peer: nil, order: Date(), metadata: metadata, state: state))
+        }
+        let journalURL = root.appendingPathComponent("queue.json")
+        try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
+        let server = try USBServer(root: root, secret: nil)
+
+        do {
+            try await server.deleteMessages([sent, received, queued])
+            XCTFail("Deletion accepted a queued message")
+        } catch SessionFault.invalidState { }
+        do {
+            try await server.deleteReceivedMessages([sent])
+            XCTFail("The received-only operation accepted a sent message")
+        } catch SessionFault.invalidState { }
+        let before = await server.snapshot()
+        XCTAssertEqual(Set(before.records.map(\.id)), [sent, received, queued, kept])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.outgoingURL(sent).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: receivedBody.path))
+
+        try await server.deleteMessages([sent, received])
+        let after = await server.snapshot()
+        XCTAssertEqual(Set(after.records.map(\.id)), [queued, kept])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.outgoingURL(sent).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receivedBody.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.outgoingURL(queued).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.outgoingURL(kept).path))
+
+        let reopened = try USBServer(root: root, secret: nil)
+        let persisted = await reopened.snapshot()
+        XCTAssertEqual(Set(persisted.records.map(\.id)), [queued, kept])
+    }
+
     private func commitMessage(_ id: UUID) throws -> URL {
         let data = Data("test".utf8)
         let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8",

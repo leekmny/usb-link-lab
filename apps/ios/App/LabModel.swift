@@ -85,7 +85,7 @@ struct LabItem: Identifiable {
     var active: Bool { state == .sending || state == .receiving }
     var needsAttention: Bool { state == .unconfirmed || state == .interrupted }
     var canRetry: Bool { direction == .outgoing && needsAttention }
-    var canDeleteReceivedMessage: Bool { direction == .incoming && state == .completed && kind == .text }
+    var canDeleteMessage: Bool { state == .completed && kind == .text }
     var downloadable: Bool { direction == .incoming && state == .completed && kind != .text && fileURL != nil }
 
     var status: LabCopy {
@@ -309,30 +309,17 @@ final class LabModel: ObservableObject {
         }
     }
 
-    func deleteReceivedMessage(_ id: UUID) async -> Bool {
+    func deleteMessages(_ ids: Set<UUID>) async -> Bool {
         #if DEBUG && targetEnvironment(simulator)
         if synthetic {
-            guard let index = items.firstIndex(where: { $0.id == id && $0.canDeleteReceivedMessage }) else { return false }
-            items.remove(at: index)
-            return true
-        }
-        #endif
-        return await perform(or: .operationFailed) { server in
-            try await server.deleteReceivedMessage(id)
-        }
-    }
-
-    func deleteReceivedMessages(_ ids: Set<UUID>) async -> Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        if synthetic {
-            let eligible = Set(items.lazy.filter(\.canDeleteReceivedMessage).map(\.id))
+            let eligible = Set(items.lazy.filter(\.canDeleteMessage).map(\.id))
             guard !ids.isEmpty, ids.isSubset(of: eligible) else { return false }
             items.removeAll { ids.contains($0.id) }
             return true
         }
         #endif
         return await perform(or: .operationFailed) { server in
-            try await server.deleteReceivedMessages(ids)
+            try await server.deleteMessages(ids)
         }
     }
 
@@ -391,17 +378,20 @@ final class LabModel: ObservableObject {
                 LabItem(id: UUID(), direction: .outgoing, mode: .aes256GCM, kind: .image, name: "color-target.png", mediaType: "image/png", total: 2_097_152, state: .sending, bytes: 1_245_184),
                 LabItem(id: UUID(), direction: .incoming, mode: .hmacSHA256, kind: .file, name: "reference.txt", mediaType: "text/plain", total: 286_720, state: .receiving, bytes: 65_536)
             ]
-        } else if arguments.contains("--lab-state=received") {
+        } else if arguments.contains("--lab-state=received") || arguments.contains("--lab-state=sent") {
+            let direction: TransferDirection = arguments.contains("--lab-state=sent") ? .outgoing : .incoming
             items = [
-                LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .text,
+                LabItem(id: UUID(), direction: direction, mode: .aes256GCM, kind: .text,
                         name: "", mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4)
             ]
-        } else if arguments.contains("--lab-state=received-multiple") {
+        } else if arguments.contains("--lab-state=mixed-message-history") {
             items = ["message-gamma.txt", "message-beta.txt", "message-alpha.txt"].map { name in
                 LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .text,
                         name: name, mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4)
             }
             items.insert(contentsOf: [
+                LabItem(id: UUID(), direction: .outgoing, mode: .aes256GCM, kind: .text,
+                        name: "sending-message.txt", mediaType: "text/plain; charset=utf-8", total: 4, state: .sending, bytes: 1),
                 LabItem(id: UUID(), direction: .outgoing, mode: .aes256GCM, kind: .text,
                         name: "sent-message.txt", mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4),
                 LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .file,
