@@ -313,9 +313,13 @@ public actor USBServer {
         guard foreground, admitsSavedPeer else { return }
         listenerRetry = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
-            guard !Task.isCancelled else { return }
-            self?.startListener()
+            await self?.retryListener()
         }
+    }
+
+    private func retryListener() {
+        guard !Task.isCancelled, foreground, admitsSavedPeer else { return }
+        startListener()
     }
 
     func accept(_ stream: SessionStream, listenerID expected: UUID? = nil) {
