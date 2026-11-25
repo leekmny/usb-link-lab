@@ -3,7 +3,6 @@
 import asyncio
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from functools import partial
 import json
 import os
 import secrets
@@ -19,12 +18,19 @@ from . import transport
 from .pairing import Pairing, PairingError, PairingStore, atomic_save, encode_pairing_qr
 from .pin_pairing import CODE_TTL, PAIRING_TIMEOUT, PairingBackendError, PairingProtocolError, pair_client
 from .protocol import AuthenticationError, Mode, ProtocolError
-from .session import DrainRequired, Session, SessionCancelled, SessionError
+from .session import DrainRequired, Session, SessionCancelled, SessionError, SessionTransportError
 from .storage import Job, Storage
 
 
 MAX_JOBS = 32
 RETRYABLE = {"interrupted", "unconfirmed"}
+RECONNECT_INITIAL_DELAY = 1
+RECONNECT_MAX_DELAY = 8
+RECONNECT_TRANSPORT_ERRORS = {
+    "service_stopped", "service_unavailable", "mux_unavailable", "mux_timeout",
+    "device_gone", "listener_refused", "connect_rejected",
+}
+DELETABLE_OUTGOING_HISTORY = RETRYABLE | {"complete", "paused"}
 
 
 @dataclass
@@ -87,6 +93,7 @@ class Controller(QObject):
         self.items = OrderedDict()
         self.progress_signals = {}
         self.deleting_messages = set()
+        self.interrupted_receives = set()
         self.enqueued = 0
         self.admitting = None
         self.disconnect_requested = False
@@ -140,25 +147,26 @@ class Controller(QObject):
         task.add_done_callback(self.commands.discard)
 
     def _restore(self):
-        if self.outbox.exists():
-            for saved in json.loads(self.outbox.read_text(encoding="utf-8")):
-                mode = Mode(saved["mode"])
-                path = Path(saved["path"])
-                job = Job(
-                    id=saved["id"], mode=mode, kind=saved["kind"],
-                    name=saved["name"], media_type=saved["media_type"],
-                    size=saved["size"], path=path, text=saved["text"],
-                )
-                status = saved["status"]
-                if status in {"sending", "verifying"}:
-                    status = "unconfirmed"
-                elif status == "queued":
-                    status = "paused"
-                if status != "complete" and (path.parent != self.storage.outgoing or not path.is_file()):
-                    continue
-                entry = OutboxEntry(job, saved["binding"], status)
-                self.items[job.id] = entry
-                self._outgoing(entry)
+        saved_items = json.loads(self.outbox.read_text(encoding="utf-8")) if self.outbox.exists() else []
+        self.storage.recover_job_deletions({saved["id"] for saved in saved_items})
+        for saved in saved_items:
+            mode = Mode(saved["mode"])
+            path = Path(saved["path"])
+            job = Job(
+                id=saved["id"], mode=mode, kind=saved["kind"],
+                name=saved["name"], media_type=saved["media_type"],
+                size=saved["size"], path=path, text=saved["text"],
+            )
+            status = saved["status"]
+            if status in {"sending", "verifying"}:
+                status = "unconfirmed"
+            elif status == "queued":
+                status = "paused"
+            if status != "complete" and (path.parent != self.storage.outgoing or not path.is_file()):
+                continue
+            entry = OutboxEntry(job, saved["binding"], status)
+            self.items[job.id] = entry
+            self._outgoing(entry)
         for item in reversed(self.storage.received(preview_chars=480)):
             self.changed.emit("item", {
                 "id": "in:" + item.id, "direction": "incoming", "status": "complete",
@@ -348,69 +356,108 @@ class Controller(QObject):
 
     async def _supervise(self, device, pairing, *, pending=None):
         state = "disconnected"
-        writer = None
+        authenticated = False
+        reconnecting = False
+        delay = RECONNECT_INITIAL_DELAY
+
+        def authenticated_session():
+            nonlocal pending, authenticated, reconnecting, delay
+            if self.disconnect_requested or self.stop.is_set():
+                raise SessionCancelled("Session cancelled")
+            if pending is not None:
+                self._save_pairing(pairing)
+                pending = None
+            authenticated = True
+            reconnecting = False
+            delay = RECONNECT_INITIAL_DELAY
+
         try:
             while not self.disconnect_requested and not self.stop.is_set():
-                self.changed.emit("connection", "pairing_code_connecting" if pending else "connecting")
-                reader, writer = await self.usb.connect(device)
-                if pending is not None:
-                    remaining = pending.expires - time.monotonic()
-                    if remaining <= 0:
-                        state = "pairing_code_expired"
-                        break
-                    if pending.method == "code":
-                        secret = await pair_client(reader, writer, pending.credential,
-                                                   timeout=min(remaining, PAIRING_TIMEOUT))
-                    else:
-                        secret = pending.credential
-                    pairing = Pairing(device.stable_id, secret)
-                save = partial(self._save_pairing, pairing) if pending is not None else None
-                session = Session(reader, writer, pairing.secret, self.storage, self._transfer_event,
-                                  on_authenticated=save)
-                self.session = session
-                writer = None  # Session owns the stream from here.
-                pending = None
-                result = await self._run_session(session, pairing.binding)
-                self.session = None
-                if result != "drained" or self.stop.is_set():
+                writer = None
+                recoverable = False
+                try:
+                    if not reconnecting:
+                        self.changed.emit("connection", "pairing_code_connecting" if pending else "connecting")
+                    reader, writer = await self.usb.connect(device)
+                    if pending is not None:
+                        remaining = pending.expires - time.monotonic()
+                        if remaining <= 0:
+                            state = "pairing_code_expired"
+                            break
+                        if pending.method == "code":
+                            secret = await pair_client(reader, writer, pending.credential,
+                                                       timeout=min(remaining, PAIRING_TIMEOUT))
+                        else:
+                            secret = pending.credential
+                        pairing = Pairing(device.stable_id, secret)
+                    session = Session(reader, writer, pairing.secret, self.storage, self._transfer_event,
+                                      on_authenticated=authenticated_session)
+                    self.session = session
+                    writer = None  # Session owns the stream from here.
+                    result = await self._run_session(session, pairing.binding)
+                    if result == "drained":
+                        continue
                     break
-        except transport.TransportError as error:
-            state = error.code
-        except PairingBackendError:
-            state = "pairing_unavailable"
-        except PairingProtocolError:
-            state = "pairing_code_failed"
-        except PairingError:
-            state = "pairing_store_failed"
-        except AuthenticationError:
-            state = "authentication_failed"
-        except ProtocolError:
-            state = "protocol_failed"
-        except (SessionCancelled, asyncio.CancelledError, ConnectionError):
+                except transport.TransportError as error:
+                    state = error.code
+                    recoverable = state in RECONNECT_TRANSPORT_ERRORS
+                except PairingBackendError:
+                    state = "pairing_unavailable"
+                except PairingProtocolError:
+                    state = "pairing_code_failed"
+                except PairingError:
+                    state = "pairing_store_failed"
+                except AuthenticationError:
+                    state = "authentication_failed"
+                except ProtocolError as error:
+                    # The existing codec chains I/O truncation and timeout causes.
+                    recoverable = isinstance(error.__cause__, (asyncio.IncompleteReadError, TimeoutError))
+                    state = "session_failed" if recoverable else "protocol_failed"
+                except SessionCancelled:
+                    break
+                except SessionTransportError:
+                    state = "session_failed"
+                    recoverable = True
+                except (SessionError, OSError, ValueError, RuntimeError):
+                    state = "session_failed"
+                finally:
+                    self.session = None
+                    if writer is not None:
+                        writer.close()
+                        try:
+                            await asyncio.wait_for(writer.wait_closed(), 1)
+                        except (OSError, TimeoutError):
+                            pass
+
+                if not authenticated or not recoverable or self.disconnect_requested or self.stop.is_set():
+                    break
+                if not reconnecting:
+                    self._pause_queue()
+                    self.changed.emit("connection", "reconnecting")
+                    reconnecting = True
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RECONNECT_MAX_DELAY)
+        except asyncio.CancelledError:
             pass
-        except (SessionError, OSError, ValueError, RuntimeError):
-            state = "session_failed"
         finally:
-            if writer is not None:
-                writer.close()
-                try:
-                    await asyncio.wait_for(writer.wait_closed(), 1)
-                except (OSError, TimeoutError):
-                    pass
-            self.disconnect_epoch += 1
-            changed = False
-            for entry in self.items.values():
-                if entry.status == "queued":
-                    entry.status = "paused"
-                    self._outgoing(entry)
-                    changed = True
-            if changed:
-                try:
-                    self._persist()
-                except OSError:
-                    self.changed.emit("error", "storage_failed")
-            self.session = None
+            self._pause_queue()
+            if self.disconnect_requested or self.stop.is_set():
+                state = "disconnected"
             self.changed.emit("connection", state)
+
+    def _pause_queue(self):
+        self.disconnect_epoch += 1
+        changed = False
+        for entry in self.items.values():
+            if entry.status == "queued":
+                entry.status = "paused"
+                self._outgoing(entry)
+                changed = True
+        if changed:
+            try:
+                self._persist()
+            except OSError:
+                self.changed.emit("error", "storage_failed")
 
     def _save_pairing(self, pairing):
         try:
@@ -430,6 +477,8 @@ class Controller(QObject):
                 await ready
             except SessionError:
                 return await run
+            if self.disconnect_requested or self.stop.is_set():
+                raise SessionCancelled("Session cancelled")
             for entry in self.items.values():
                 if entry.status == "paused" and entry.binding == binding:
                     entry.status = "queued"
@@ -483,6 +532,10 @@ class Controller(QObject):
             live_id = f"in:{event.generation}:{event.item_id.hex()}"
             row_id = "in:" + event.received_id if event.received_id else live_id
             previous_id = live_id if event.received_id else None
+            if event.status == "interrupted":
+                self.interrupted_receives.add(live_id)
+            else:
+                self.interrupted_receives.discard(live_id)
         entry = self.items.get(row_id)
         if entry is not None and event.status != entry.status:
             entry.status = event.status
@@ -540,6 +593,12 @@ class Controller(QObject):
                               "message_deleted" if purged else "message_delete_pending")
 
     async def _delete_received_messages(self, row_ids):
+        await self._delete_items(row_ids, self._discard_received_message)
+
+    async def _delete_history_items(self, row_ids):
+        await self._delete_items(row_ids, self._discard_history_item)
+
+    async def _delete_items(self, row_ids, discard):
         result = {"removed": 0, "pending": 0, "failed": 0}
         seen = set()
         for row_id in row_ids:
@@ -550,7 +609,7 @@ class Controller(QObject):
                 continue
             seen.add(row_id)
             try:
-                purged = await self._discard_received_message(row_id)
+                purged = await discard(row_id)
             except (OSError, ValueError, RuntimeError):
                 result["failed"] += 1
                 continue
@@ -561,14 +620,42 @@ class Controller(QObject):
                 result["pending"] += not purged
         self.changed.emit("bulk_delete_result", result)
 
-    async def _discard_received_message(self, row_id):
+    async def _discard_history_item(self, row_id):
+        if row_id in self.interrupted_receives:
+            self.interrupted_receives.remove(row_id)
+            self.changed.emit("removed", row_id)
+            return True
+        if row_id.startswith("in:"):
+            return await self._discard_received_message(row_id, include_attachments=True)
+        entry = self.items.get(row_id)
+        if (self.storage is None or entry is None or row_id == self.admitting
+                or entry.status not in DELETABLE_OUTGOING_HISTORY):
+            return None
+        pending = self.storage.stage_job_deletion(entry.job)
+        try:
+            self._persist(exclude=row_id)
+        except (OSError, ValueError, RuntimeError):
+            if pending is not None:
+                pending.rename(entry.job.path)
+            raise
+        self.items.pop(row_id)
+        self.changed.emit("removed", row_id)
+        if pending is not None:
+            try:
+                pending.unlink()
+            except OSError:
+                return False
+        return True
+
+    async def _discard_received_message(self, row_id, *, include_attachments=False):
         if self.storage is None or not isinstance(row_id, str) or not row_id.startswith("in:"):
             return None
         if row_id in self.deleting_messages:
             return None
         self.deleting_messages.add(row_id)
         try:
-            purged = await asyncio.to_thread(self.storage.delete_received_message, row_id.removeprefix("in:"))
+            delete = self.storage.delete_received_item if include_attachments else self.storage.delete_received_message
+            purged = await asyncio.to_thread(delete, row_id.removeprefix("in:"))
             self.changed.emit("removed", row_id)
             return purged
         finally:

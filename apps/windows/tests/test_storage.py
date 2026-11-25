@@ -144,3 +144,40 @@ def test_delete_received_message_preserves_damaged_record(tmp_path):
         storage.delete_received_message(message.id)
     assert message.path.read_bytes() == b"preserved text"
     assert record.exists()
+
+
+
+
+def test_delete_received_item_purges_only_selected_attachment(tmp_path):
+    from usblinklab.storage import Storage
+
+    storage = Storage(tmp_path / "app")
+    message = commit_received(storage, b"keep this text")
+    attachment = commit_received(storage, b"committed attachment", kind="file")
+    saved_copy = tmp_path / "saved-copy.bin"
+    saved_copy.write_bytes(attachment.path.read_bytes())
+
+    assert storage.delete_received_item(attachment.id)
+    assert not attachment.path.parent.exists()
+    assert [item.id for item in Storage(tmp_path / "app").received()] == [message.id]
+    assert saved_copy.read_bytes() == b"committed attachment"
+
+
+
+
+def test_removal_markers_recover_on_either_side_of_the_outbox_commit(tmp_path):
+    from usblinklab.protocol import Mode
+    from usblinklab.storage import Storage
+
+    before = Storage(tmp_path / "app")
+    kept = before.stage_text("still listed in the outbox", Mode.HMACSHA256)
+    removed = before.stage_text("already omitted from the outbox", Mode.AES256GCM)
+    kept_marker = before.stage_job_deletion(kept)
+    removed_marker = before.stage_job_deletion(removed)
+    assert not kept.path.exists() and not removed.path.exists()
+
+    after = Storage(tmp_path / "app")
+    after.recover_job_deletions({kept.id})
+    assert kept.path.read_bytes() == b"still listed in the outbox"
+    assert not removed.path.exists()
+    assert not kept_marker.exists() and not removed_marker.exists()

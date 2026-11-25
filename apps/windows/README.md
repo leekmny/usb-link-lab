@@ -69,8 +69,12 @@ status covers its separate authentication and protocol checks. A successful
 application handshake still requires the actual cable test to establish the
 physical result.
 
-## Delete received messages
+## Clear transfer history
 
-In Transfer history, choose Select messages, check the completed received text messages to remove, then choose Delete selected messages and confirm the count. This removes the selected records and their saved bodies from this PC.
+In Transfer history, choose Clear history to delete the eligible records shown in the list, or choose Select items for a subset. The confirmation shows the count. Deleting an item removes its record and the app-owned copy of its message or attachment. Completed sent and received items, paused outgoing items, and records left by an interrupted session can be removed. Active and queued items remain available for transfer until their status changes.
 
-To remove one message from its details, choose Delete message and confirm.
+To remove one received text message from its details, choose Delete message and confirm.
+
+## Reconnect over USB
+
+After an authenticated session drops, the Windows app automatically retries the same paired iPhone with increasing delays of up to 8 seconds between attempts. Keep the iPhone app open and the device unlocked for a new USB session. Use Disconnect or Cancel session to stop automatic retries. Interrupted or unconfirmed transfers require an explicit retry.

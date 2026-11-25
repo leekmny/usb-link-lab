@@ -41,6 +41,10 @@ class SessionError(Exception):
     """An authenticated connection is unusable."""
 
 
+class SessionTransportError(SessionError):
+    """The USB stream closed or stopped making protocol progress."""
+
+
 class SessionCancelled(SessionError):
     """The user stopped this connection and its active transfers."""
 
@@ -183,8 +187,8 @@ class Session:
                 watch_task.result()
             outcome = read_task.result()
             return outcome
-        except EndOfStream as exc:
-            self._failure = self._failure or SessionError("Connection closed")
+        except (EndOfStream, ConnectionError) as exc:
+            self._failure = self._failure or SessionTransportError("Connection closed")
             raise self._failure from exc
         except (OSError, EOFError) as exc:
             self._failure = self._failure or SessionError("Connection or local storage was interrupted")
@@ -330,6 +334,9 @@ class Session:
         except (OSError, ProtocolError, SessionError) as exc:
             if item is not None and item.complete.is_set():
                 return item.id
+            if isinstance(exc, (ProtocolError, SessionTransportError)):
+                self._abort(exc)
+                raise
             error = SessionError("Could not send staged item")
             self._abort(error)
             raise error from exc
@@ -516,8 +523,11 @@ class Session:
         record = encode_frame(Frame(type_, mode, self._send_sequence, item_id, index, body), self._out_keys)
         self._send_sequence += 1
         self._sent_bytes += len(body)
-        self.writer.write(record)
-        await self.writer.drain()
+        try:
+            self.writer.write(record)
+            await self.writer.drain()
+        except OSError as exc:
+            raise SessionTransportError("Connection closed during frame write") from exc
 
     def _new_id(self) -> bytes:
         while True:
@@ -556,12 +566,12 @@ class Session:
                 deadlines.append(self._drain_deadline)
             deadline = min(deadlines, default=None)
             if deadline is not None and deadline <= asyncio.get_running_loop().time():
-                raise SessionError("Transfer or session drain timed out")
+                raise SessionTransportError("Transfer or session drain timed out")
             try:
                 async with asyncio.timeout_at(deadline):
                     await self._activity.wait()
             except TimeoutError as exc:
-                raise SessionError("Transfer or session drain timed out") from exc
+                raise SessionTransportError("Transfer or session drain timed out") from exc
 
     def _abort(self, error: Exception) -> None:
         self._failure = self._failure or error

@@ -19,6 +19,7 @@ from .protocol import CHUNK_SIZE, MAX_FILE_SIZE, MAX_TEXT_SIZE, Mode, validate_f
 
 TEXT_MEDIA_TYPE = "text/plain; charset=utf-8"
 _DELETED_RECEIVED = ".deleted-"
+_DELETED_JOB = ".deleted-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +77,7 @@ class Storage:
         for directory in self.complete.glob(_DELETED_RECEIVED + "*"):
             received_id = directory.name.removeprefix(_DELETED_RECEIVED)
             try:
-                if self._valid_received_id(received_id):
+                if self._valid_item_id(received_id):
                     self._purge_deleted_record(directory)
             except OSError:
                 continue
@@ -156,6 +157,38 @@ class Storage:
         if job.path.parent != self.outgoing or job.path.name != f"{job.id}.stage":
             raise ValueError("Job is outside this application's staging storage")
         job.path.unlink(missing_ok=True)
+
+    def stage_job_deletion(self, job: Job) -> Path | None:
+        # The outbox write follows the rename. Recovery uses the outbox to either
+        # restore this snapshot or finish its deletion.
+        if (not self._valid_item_id(job.id) or job.path != self.outgoing / f"{job.id}.stage"
+                or self.outgoing.resolve() != self.outgoing or job.path.is_symlink()):
+            raise ValueError("Job is outside this application's staging storage")
+        pending = job.path.with_name(_DELETED_JOB + job.path.name)
+        if pending.exists() or pending.is_symlink():
+            raise FileExistsError("Another deletion snapshot exists for this job")
+        if not job.path.is_file():
+            if job.path.exists():
+                raise ValueError("Outgoing snapshot is not a regular file")
+            return None
+        return job.path.rename(pending)
+
+    def recover_job_deletions(self, retained_ids: set[str]) -> None:
+        if self.outgoing.resolve() != self.outgoing:
+            return
+        for pending in self.outgoing.glob(_DELETED_JOB + "*.stage"):
+            job_id = pending.stem.removeprefix(_DELETED_JOB)
+            if not self._valid_item_id(job_id) or pending.is_symlink() or not pending.is_file():
+                continue
+            try:
+                if job_id not in retained_ids:
+                    pending.unlink()
+                else:
+                    original = self.outgoing / f"{job_id}.stage"
+                    if not original.exists() and not original.is_symlink():
+                        pending.rename(original)
+            except OSError:
+                continue
 
     def begin_receive(self, size: int) -> IncomingFile:
         self._check_space(self.incoming, size)
@@ -255,7 +288,11 @@ class Storage:
 
     def delete_received_message(self, item_id: str) -> bool:
         """Remove one committed text row. False means disk cleanup will retry on launch."""
-        if not self._valid_received_id(item_id):
+        return self.delete_received_item(item_id, text_only=True)
+
+    def delete_received_item(self, item_id: str, *, text_only: bool = False) -> bool:
+        """Remove the committed record and its app-owned payload."""
+        if not self._valid_item_id(item_id):
             raise ValueError("Invalid received item identity")
         directory = self.complete / item_id
         record = directory / "metadata.json"
@@ -268,8 +305,8 @@ class Storage:
             item = self._read_received(record, 0)
         except (KeyError, TypeError) as exc:
             raise ValueError("Invalid received message metadata") from exc
-        if item.kind != "text":
-            raise ValueError("Only committed received text can be deleted")
+        if item.kind not in {"text", "image", "file"} or (text_only and item.kind != "text"):
+            raise ValueError("Received item kind is not eligible for deletion")
 
         # Keep history consistent across crashes and failed file cleanup.
         deleted = directory.with_name(_DELETED_RECEIVED + item_id)
@@ -281,7 +318,7 @@ class Storage:
         return True
 
     @staticmethod
-    def _valid_received_id(value: str) -> bool:
+    def _valid_item_id(value: str) -> bool:
         try:
             identifier = UUID(value)
         except (AttributeError, TypeError, ValueError):

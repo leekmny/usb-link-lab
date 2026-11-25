@@ -23,7 +23,7 @@ from .protocol import Mode
 from .theme import THEMES, stylesheet
 
 
-ACTIVE_CONNECTIONS = {"connecting", "pairing_code_connecting", "connected"}
+ACTIVE_CONNECTIONS = {"connecting", "pairing_code_connecting", "connected", "reconnecting"}
 
 
 def label(text="", name="", *, wrap=False, size=None):
@@ -356,11 +356,15 @@ class Window(QMainWindow):
         self.delete_selected_messages = self._button(
             "delete_selected_messages", self._delete_selected_messages
         )
+        self.delete_all_history = self._button(
+            "delete_all_history", self._clear_transfer_history
+        )
         message_actions.addWidget(self.select_messages)
         message_actions.addWidget(self.selection_count)
         message_actions.addStretch()
         message_actions.addWidget(self.cancel_message_selection)
         message_actions.addWidget(self.delete_selected_messages)
+        message_actions.addWidget(self.delete_all_history)
         self.message_selection.hide()
         view.addWidget(self.message_selection)
 
@@ -599,7 +603,7 @@ class Window(QMainWindow):
 
     def _apply_message_check(self, item, event):
         checkable = Qt.ItemFlag.ItemIsUserCheckable
-        if self.selecting_messages and self._can_delete_message(event):
+        if self.selecting_messages and self._can_delete_history_item(event):
             item.setFlags(item.flags() | checkable)
             state = Qt.CheckState.Checked if event["id"] in self.checked_messages else Qt.CheckState.Unchecked
             item.setCheckState(0, state)
@@ -612,7 +616,7 @@ class Window(QMainWindow):
         if not self.selecting_messages or self.deleting_selection or column != 0:
             return
         entry = self.rows.get(item.data(0, Qt.ItemDataRole.UserRole))
-        if entry is None or not self._can_delete_message(entry[1]):
+        if entry is None or not self._can_delete_history_item(entry[1]):
             return
         row_id = entry[1]["id"]
         if item.checkState(0) == Qt.CheckState.Checked:
@@ -623,10 +627,12 @@ class Window(QMainWindow):
 
     def _refresh_message_selection(self):
         self.message_selection.setVisible(self.show_history)
-        self.select_messages.setVisible(not self.selecting_messages)
-        self.select_messages.setEnabled(not self.deleting_selection and any(
-            self._can_delete_message(event) for _, event in self.rows.values()
-        ))
+        can_delete = not self.deleting_selection and any(
+            self._can_delete_history_item(event) for _, event in self.rows.values()
+        )
+        for widget in (self.select_messages, self.delete_all_history):
+            widget.setVisible(not self.selecting_messages)
+            widget.setEnabled(can_delete)
         for widget in (self.selection_count, self.cancel_message_selection, self.delete_selected_messages):
             widget.setVisible(self.selecting_messages)
         self.selection_count.setText(self.tr_key("selected_messages_count").format(count=len(self.checked_messages)))
@@ -636,17 +642,28 @@ class Window(QMainWindow):
         self.items.setEnabled(not self.selecting_messages or not self.deleting_selection)
 
     def _delete_selected_messages(self):
-        if not self.selecting_messages or self.deleting_selection:
+        if self.selecting_messages:
+            self._delete_history_items("delete_selected_messages", self.checked_messages)
+
+    def _clear_transfer_history(self):
+        if self.show_history and not self.selecting_messages:
+            self._delete_history_items("delete_all_history")
+
+    def _delete_history_items(self, title, selected=None):
+        if self.deleting_selection:
             return
-        selected = tuple(row_id for row_id in self.rows if row_id in self.checked_messages)
-        if not selected:
+        ids = tuple(
+            row_id for row_id, (_, event) in self.rows.items()
+            if (selected is None or row_id in selected) and self._can_delete_history_item(event)
+        )
+        if not ids:
             return
-        message = self.tr_key("delete_selected_messages_explain").format(count=len(selected))
-        if self._confirm("delete_selected_messages", message):
+        message = self.tr_key("delete_history_explain").format(count=len(ids))
+        if self._confirm(title, message):
             self.deleting_selection = True
             self.feedback = ""
             self._update_state()
-            self.bridge.submit("delete_received_messages", selected)
+            self.bridge.submit("delete_history_items", ids)
 
     def _feedback_text(self):
         if self.feedback != "bulk_delete_result":
@@ -663,7 +680,7 @@ class Window(QMainWindow):
         state = self.connection_state
         if state == "connected":
             tone, caption = "success", "connected"
-        elif state in {"connecting", "pairing_code_connecting", "scanning", "paired"}:
+        elif state in {"connecting", "pairing_code_connecting", "reconnecting", "scanning", "paired"}:
             tone, caption = "primary", state
         elif state in {"disconnected", "select_device", "no_device"}:
             tone, caption = "secondary", "disconnected"
@@ -1056,6 +1073,13 @@ class Window(QMainWindow):
         event = self._selected()
         if event is not None:
             self.bridge.submit("remove", event["id"])
+
+    @staticmethod
+    def _can_delete_history_item(event):
+        status = event["status"]
+        if event["direction"] == "outgoing":
+            return status in {"complete", "paused", "interrupted", "unconfirmed"}
+        return status == "interrupted" or (status == "complete" and bool(event.get("path")))
 
     @staticmethod
     def _can_delete_message(event):

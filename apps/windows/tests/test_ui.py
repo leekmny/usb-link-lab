@@ -247,7 +247,7 @@ def test_received_message_delete_requires_confirmation_and_clears_preview(tmp_pa
     app.processEvents()
 
 
-def test_history_bulk_delete_selects_only_committed_messages(tmp_path, monkeypatch):
+def test_history_bulk_delete_selects_completed_sent_and_received_items(tmp_path, monkeypatch):
     from PySide6.QtWidgets import QAbstractItemView
 
     app = QApplication.instance() or QApplication([])
@@ -273,7 +273,7 @@ def test_history_bulk_delete_selects_only_committed_messages(tmp_path, monkeypat
     assert not window.delete_selected_messages.isEnabled()
     checkable = Qt.ItemFlag.ItemIsUserCheckable
     assert [bool(window.rows[row_id][0].flags() & checkable) for row_id in ids] == [
-        True, True, False, False, False,
+        True, True, True, True, False,
     ]
     first, second = (window.rows[row_id][0] for row_id in ids[:2])
     window.items.setCurrentItem(first)
@@ -288,7 +288,7 @@ def test_history_bulk_delete_selects_only_committed_messages(tmp_path, monkeypat
     assert bridge.commands == []
     monkeypatch.setattr(window, "_confirm", lambda *_: True)
     window.delete_selected_messages.click()
-    assert bridge.commands == [("delete_received_messages", ids[:2])]
+    assert bridge.commands == [("delete_history_items", ids[:2])]
     assert not window.delete_selected_messages.isEnabled()
 
     bridge.changed.emit("removed", ids[0])
@@ -303,5 +303,64 @@ def test_history_bulk_delete_selects_only_committed_messages(tmp_path, monkeypat
     assert window._selected()["id"] == "sent"
     assert window._send_shortcut.isEnabled()
     assert all(not window.rows[row_id][0].flags() & checkable for row_id in ids[1:])
+    window.close()
+    app.processEvents()
+
+
+def test_clear_history_confirms_only_deletable_rows_after_session_cancel(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    app.processEvents()
+    base = {"mode": Mode.AES256GCM, "kind": "text", "name": "", "size": 10, "transferred": 10}
+    events = [
+        {"id": "sent", "direction": "outgoing", "status": "complete"},
+        {"id": "in:received", "direction": "incoming", "status": "complete", "path": tmp_path / "content"},
+        {"id": "in:session:item", "direction": "incoming", "status": "interrupted"},
+        {"id": "paused", "direction": "outgoing", "status": "paused"},
+        {"id": "sending", "direction": "outgoing", "status": "sending"},
+    ]
+    for event in events:
+        bridge.changed.emit("item", {**base, **event})
+    assert not window.delete_all_history.isVisible()
+    window.history.click()
+    bridge.changed.emit("connection", "disconnected")
+    assert window.delete_all_history.isEnabled()
+    confirmations = []
+
+    def ask(title, body):
+        confirmations.append((title, body))
+        return len(confirmations) == 2
+
+    monkeypatch.setattr(window, "_confirm", ask)
+    window.delete_all_history.click()
+    assert bridge.commands == []
+    window.delete_all_history.click()
+    assert all(title == "delete_all_history" and "4" in body for title, body in confirmations)
+    assert bridge.commands == [("delete_history_items", ("sent", "in:received", "in:session:item", "paused"))]
+    assert not window.delete_all_history.isEnabled()
+    for event in events[:4]:
+        bridge.changed.emit("removed", event["id"])
+    bridge.changed.emit("bulk_delete_result", {"removed": 4, "pending": 0, "failed": 0})
+    assert set(window.rows) == {"sending"}
+    assert not window.delete_all_history.isEnabled()
+    assert "4" in window.feedback_label.text()
+    window.close()
+    app.processEvents()
+
+
+def test_usb_reconnecting_can_be_cancelled(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    bridge.changed.emit("connection", "reconnecting")
+    assert window.connection_caption.text() == window.tr_key("reconnecting")
+    assert window.connect.isEnabled()
+    assert not window.refresh.isEnabled()
+    assert window.connect.text() == window.tr_key("disconnect")
+    monkeypatch.setattr(window, "_confirm", lambda *_: True)
+    window.connect.click()
+    assert bridge.commands == [("disconnect",)]
     window.close()
     app.processEvents()

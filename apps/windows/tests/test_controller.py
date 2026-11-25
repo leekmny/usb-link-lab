@@ -25,6 +25,7 @@ class SyntheticUSB:
         self.secret = secret
         self.attempts = 0
         self.code = None
+        self.peer = None
 
     async def discover(self):
         return [self.device]
@@ -38,7 +39,8 @@ class SyntheticUSB:
                 code, self.code = self.code, None
                 if code is not None:
                     self.secret = await pair_server(reader, writer, code)
-                await Session(reader, writer, self.secret, self.storage, lambda _: None, client=False).run()
+                self.peer = Session(reader, writer, self.secret, self.storage, lambda _: None, client=False)
+                await self.peer.run()
             except (PairingProtocolError, ProtocolError, SessionError):
                 pass
 
@@ -305,3 +307,103 @@ def test_worker_bulk_delete_continues_after_failed_item_and_reports_pending_clea
         assert not locked.path.parent.exists()
     finally:
         controller.shutdown()
+
+
+
+def test_history_bulk_delete_cleans_restored_sent_and_received_records(tmp_path):
+    from hashlib import sha256
+    import json
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "client"
+    storage = Storage(root / "storage")
+    usb = SyntheticUSB(tmp_path / "peer", secrets.token_bytes(32))
+    source = tmp_path / "selected.bin"
+    source.write_bytes(b"original attachment")
+    sent = storage.stage_text("sent history fixture", Mode.AES256GCM)
+    paused = storage.stage_file(source, Mode.HMACSHA256)
+    unselected = storage.stage_text("unselected history fixture", Mode.PLAINTEXT)
+    outbox = root / "outbox.json"
+    outbox.write_text(json.dumps([{
+        "id": job.id, "mode": int(job.mode), "kind": job.kind, "name": job.name,
+        "media_type": job.media_type, "size": job.size, "path": str(job.path),
+        "text": job.text, "binding": "fixture-binding", "status": status,
+    } for job, status in ((sent, "complete"), (paused, "paused"), (unselected, "complete"))]),
+        encoding="utf-8")
+
+    original = b"received attachment"
+    draft = storage.begin_receive(len(original))
+    draft.write(original)
+    received = storage.commit_receive(
+        draft, mode=Mode.AES256GCM, kind="file", name="received.bin", media_type="application/octet-stream",
+        size=len(original), sha256=sha256(original).hexdigest(),
+    )
+    outside = tmp_path / "saved-copy.bin"
+    outside.write_bytes(received.path.read_bytes())
+    ids = (sent.id, paused.id, "in:" + received.id)
+
+    controller = Controller(root, usb=usb)
+    events = []
+    controller.changed.connect(lambda name, value: events.append((name, value)))
+    controller.start()
+    try:
+        wait_for(lambda: ("connection", "select_device") in events)
+        controller.submit("delete_history_items", ids)
+        wait_for(lambda: any(topic == "bulk_delete_result" for topic, _ in events))
+        assert ("bulk_delete_result", {"removed": 3, "pending": 0, "failed": 0}) in events
+        assert {value for topic, value in events if topic == "removed"} == set(ids)
+        assert [row["id"] for row in json.loads(outbox.read_text(encoding="utf-8"))] == [unselected.id]
+        assert all(not path.exists() for path in (sent.path, paused.path, received.path))
+        assert storage.received() == []
+        assert source.read_bytes() == b"original attachment"
+        assert outside.read_bytes() == original
+    finally:
+        controller.shutdown()
+        app.processEvents()
+
+
+def test_history_can_delete_a_receive_record_after_session_cancel(tmp_path, monkeypatch):
+    from usblinklab.protocol import FrameType
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "client"
+    secret = secrets.token_bytes(32)
+    usb = SyntheticUSB(tmp_path / "peer", secret)
+    PairingStore(root / "pairing.dpapi").save(Pairing(usb.device.stable_id, secret))
+    outgoing = usb.storage.stage_text("cancelled receive fixture", Mode.AES256GCM)
+    send_frame = Session._send_frame
+
+    async def pause_peer_data(session, type_, *args):
+        if session is usb.peer and type_ is FrameType.DATA:
+            await asyncio.Event().wait()
+        await send_frame(session, type_, *args)
+
+    monkeypatch.setattr(Session, "_send_frame", pause_peer_data)
+    controller = Controller(root, usb=usb)
+    events = []
+    controller.changed.connect(lambda name, value: events.append((name, value)))
+    controller.start()
+    try:
+        wait_for(lambda: ("connection", "select_device") in events)
+        controller.submit("connect", usb.device.stable_id)
+        wait_for(lambda: ("connection", "connected") in events)
+        sending = asyncio.run_coroutine_threadsafe(usb.peer.send(outgoing), controller.loop)
+        wait_for(lambda: any(topic == "item" and value["status"] == "receiving" for topic, value in events))
+        row_id = next(value["id"] for topic, value in events if topic == "item" and value["status"] == "receiving")
+
+        controller.submit("delete_history_items", (row_id,))
+        wait_for(lambda: ("bulk_delete_result", {"removed": 0, "pending": 0, "failed": 1}) in events)
+        assert ("removed", row_id) not in events
+        controller.submit("disconnect")
+        wait_for(lambda: sending.done() and ("connection", "disconnected") in events)
+        assert any(topic == "item" and value["id"] == row_id and value["status"] == "interrupted"
+                   for topic, value in events)
+        assert isinstance(sending.exception(), SessionError)
+
+        controller.submit("delete_history_items", (row_id,))
+        wait_for(lambda: ("bulk_delete_result", {"removed": 1, "pending": 0, "failed": 0}) in events)
+        assert ("removed", row_id) in events
+        assert not list((root / "storage" / "incoming").iterdir())
+    finally:
+        controller.shutdown()
+        app.processEvents()
