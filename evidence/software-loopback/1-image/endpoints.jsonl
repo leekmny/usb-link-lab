@@ -1,0 +1,4 @@
+{"utc": "2026-11-25T09:51:45.144+00:00", "endpoint": "server", "direction": "incoming", "status": "complete", "item_id": "e77721830b588900e8412e2040eb8d01", "bytes": 18569, "mode": 1, "kind": "image"}
+{"utc": "2026-11-25T09:51:45.144+00:00", "endpoint": "client", "direction": "incoming", "status": "complete", "item_id": "6c2a93e095d153bf4bbfb6ea207b1cdd", "bytes": 18569, "mode": 1, "kind": "image"}
+{"utc": "2026-11-25T09:51:45.144+00:00", "endpoint": "client", "direction": "outgoing", "status": "complete", "item_id": "e77721830b588900e8412e2040eb8d01", "bytes": 18569, "mode": 1, "kind": "image"}
+{"utc": "2026-11-25T09:51:45.144+00:00", "endpoint": "server", "direction": "outgoing", "status": "complete", "item_id": "6c2a93e095d153bf4bbfb6ea207b1cdd", "bytes": 18569, "mode": 1, "kind": "image"}

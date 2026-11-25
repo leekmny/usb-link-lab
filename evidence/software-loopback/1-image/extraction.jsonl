@@ -1,0 +1,4 @@
+{"stream": 0, "direction": "c2s", "item_id": "e77721830b588900e8412e2040eb8d01", "mode": 1, "kind": null, "status": "encrypted", "authentication": "unverified", "reason": "Endpoint keys unavailable"}
+{"stream": 1, "direction": "c2s", "item_id": "e77721830b588900e8412e2040eb8d01", "mode": 1, "kind": null, "status": "encrypted", "authentication": "unverified", "reason": "Endpoint keys unavailable"}
+{"stream": 1, "direction": "s2c", "item_id": "6c2a93e095d153bf4bbfb6ea207b1cdd", "mode": 1, "kind": null, "status": "encrypted", "authentication": "unverified", "reason": "Endpoint keys unavailable"}
+{"stream": 0, "direction": "s2c", "item_id": "6c2a93e095d153bf4bbfb6ea207b1cdd", "mode": 1, "kind": null, "status": "encrypted", "authentication": "unverified", "reason": "Endpoint keys unavailable"}

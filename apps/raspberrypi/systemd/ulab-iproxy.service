@@ -1,0 +1,31 @@
+[Unit]
+Description=ULAB USB-only mobile device proxy
+PartOf=ulab-relay.service
+ConditionPathExists=/etc/ulab/iphone.udid
+StartLimitIntervalSec=0
+
+[Service]
+RuntimeDirectory=ulab-iproxy
+RuntimeDirectoryMode=0555
+Type=exec
+DynamicUser=yes
+User=ulab-iproxy
+LoadCredential=iphone.udid:/etc/ulab/iphone.udid
+ExecStart=/usr/bin/python3 -B /opt/ulab/usb_proxy.py
+Restart=always
+RestartSec=3
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost

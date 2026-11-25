@@ -1,0 +1,49 @@
+name: Relay and Wireshark
+on:
+  push:
+    branches: [main, 'integration/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lab:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies on isolated runner
+        run: |
+          sudo apt-get update -qq
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y tshark libcap2-bin
+          sudo chmod 755 /usr/bin/dumpcap
+          sudo setcap cap_net_raw,cap_net_admin=eip /usr/bin/dumpcap
+          python -m pip install -r tools/fixtures/requirements.txt
+      - name: Compare contract and both platform vectors
+        run: |
+          echo '535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f  protocol/PROTOCOL_V1.md' | sha256sum -c
+          python tools/fixtures/generate_ulab1.py --check
+          python tools/windows_check_ios_vectors.py < protocol/vectors/ulab1.json
+      - name: Test relay, capture policy and dissector
+        run: |
+          tshark -v
+          ULAB_RUN_LIVE_CAPTURE=1 python -m unittest discover -s tests -v
+      - name: Check touchscreen controls in a browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/ulab-ui-test" --no-audit --no-fund --ignore-scripts playwright-core@1.56.1
+          export PLAYWRIGHT_CORE="$RUNNER_TEMP/ulab-ui-test/node_modules/playwright-core"
+          export CHROMIUM_PATH="$(command -v google-chrome)"
+          test -x "$CHROMIUM_PATH"
+          node tests/test_dashboard_touch.cjs
+      - name: Capture a real loopback exchange with synthetic data
+        run: python tools/relay_experiment.py --out evidence/ci-loopback
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: software-loopback-experiment
+          path: evidence/ci-loopback
+          if-no-files-found: error
+          retention-days: 14

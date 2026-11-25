@@ -1,0 +1,22 @@
+# iPhone implementation prompt for QR and six-digit USB pairing
+
+You own the iPhone endpoint in the shared repository https://github.com/leekmny/usb-link-lab . Continue from the existing ios/native-client branch. Read the Windows branch platform/windows and the current iOS implementation before editing. Review protocol/PAIRING_V1.md, protocol/vectors/pairing-v1.json, and native/usb_pairing/ from that branch. Reuse these exact shared inputs. Keep protocol/PROTOCOL_V1.md at ULAB1-20261124-R1 with SHA-256 535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f.
+
+## User flow
+
+Replace the default 64-hex-character entry with an in-app **Scan Windows QR** action. Add **Enter six-digit code** as the secondary action for camera denial or unavailable camera. Default to Korean and keep the English option. Display readiness, expiry, connecting, failure and paired states. The user scans or enters the PC-displayed invitation, taps Prepare in iPhone, and selects Start pairing in Windows. Never display or share a raw key or scanner result, expose the code in evidence, or automatically save a photograph. Allow one armed attempt for 120 seconds and clear it on attempted use, backgrounding, cancellation, opening another invitation or expiry. Require a fresh invitation on failure.
+
+For QR, use the Apple in-app QR capture API and camera usage text localized to the app. Restrict scanning to ULABQR1: plus the canonical 43-character unpadded base64url PSK. Prepare the candidate and wait for the authentic ULAB handshake over USB. When using the six-digit option, validate exactly six ASCII digits including leading zeroes. Integrate the shared C EC J-PAKE bridge against the same pinned Mbed TLS 3.6.7 source and its provided iPhone build instructions. Add an arm64 device build and the appropriate simulator slice for local tests. Use fresh native RNG state per pairing, and validate the authenticated confirmation in constant time using CryptoKit. Keep the PAKE context and PIN in memory only.
+
+## Transport and persistence
+
+Keep the existing foreground listener restricted to IPv4 loopback port 43123. Review the listener and accept gates in apps/ios/Sources/USBLinkCore/USBServer.swift. Allow an armed invitation to start the listener before any key has been saved. Allow enrollment while the saved transfer queue is paused, while keeping that queue paused. Do not call the existing immediate-persistence updatePairing method just to prepare an invitation. Dispatch by its initial eight bytes using exact reads and the same bounded stream. Route ULABP001 to the armed six-digit flow and ULAB0001 to the armed QR or saved PSK flow as specified. Preserve the prefix for the selected parser. Keep the existing frame protocol and four protection modes. Persist only the 32-byte authenticated pairing secret, using the current this-device-only Keychain policy. Preserve the existing saved key if local authentication or persistence fails. Persist before accepting application frames. A disconnect or storage failure can leave the endpoints with different saved keys if only one persisted the candidate. Recover by explicitly enrolling again. Do not accept traffic in an unauthenticated session. Keep Wi-Fi, Bluetooth and Internet out of application traffic and enrollment.
+
+## Verification and delivery
+
+- Independently check the shared encoding/HKDF/HMAC fixture. On actual native endpoints check fresh keys, a leading-zero code, wrong code, expiry, cancellation, malformed shares and tags, replay, wrong magic and oversized header rejection.
+- Verify fresh QR enrollment, malformed QR, camera denial, same saved key on reconnect, and no key persistence when authentication fails. Verify migration of an existing saved ULAB v1 PSK. Test fragmented reads and coalesced final confirmation plus CH. Re-run v1 four-mode, duplex and Apple UI tests.
+- Build a native iPhone version. Only report live Windows/iPhone interoperability after testing a cabled signed iPhone app, each method, and saved-key reconnect. Record what ran locally, in a simulator or on hardware.
+- Keep modifications on the iPhone branch. Bring shared pairing files from the Windows branch without editing their wire fields independently. Update the iPhone handoff and publish through the authorized shared repository workflow. Keep credentials and private signing assets local.
+
+Primary Apple reference: https://developer.apple.com/documentation/visionkit/scanning-data-with-the-camera

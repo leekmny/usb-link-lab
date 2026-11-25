@@ -1,0 +1,124 @@
+name: iPhone app
+
+on:
+  push:
+    branches: [main, 'ios/**', 'integration/**']
+    paths:
+      - 'apps/ios/**'
+      - 'apps/windows/**'
+      - 'apps/raspberrypi/**'
+      - 'capture/**'
+      - 'evidence/hardware/**'
+      - 'docs/acceptance.md'
+      - 'tools/companion_relay.py'
+      - 'protocol/**'
+      - 'tools/fixtures/**'
+      - 'native/usb_pairing/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+
+jobs:
+  core:
+    name: Swift core and shared fixtures
+    runs-on: macos-15
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Check deterministic Python vectors
+        run: |
+          python -m pip install -r tools/fixtures/requirements.txt
+          python tools/fixtures/generate_ulab1.py --check
+      - name: Build the pinned native pairing bridge
+        run: bash apps/ios/scripts/build-pairing-native.sh
+      - name: Test integrated Swift and Python endpoints
+        env:
+          ULAB_WINDOWS_SOURCE: ${{ github.workspace }}/apps/windows
+          ULAB_NATIVE_TEST_LIBRARY: ${{ github.workspace }}/apps/ios/Generated/libulab_pairing_test.dylib
+        run: |
+          export ULAB_PYTHON="$(command -v python)"
+          test -f "$ULAB_WINDOWS_SOURCE/usblinklab/session.py"
+          test -s "$ULAB_NATIVE_TEST_LIBRARY"
+          xcodebuild -version
+          swift test --package-path apps/ios
+          ULAB_TEST_RELAY=1 swift test --package-path apps/ios --filter CompanionInteropTests
+
+  device:
+    name: Unsigned arm64 device artifact
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build and inspect the unsigned iPhone package
+        run: bash apps/ios/scripts/build-unsigned.sh
+      - name: Upload the device IPA, checksums and provenance
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: USBLinkLab-iphoneos-arm64-unsigned
+          path: artifacts/ios/
+          if-no-files-found: error
+          retention-days: 14
+
+  simulator:
+    name: iPhone 17 Pro Max simulator smoke and screenshots
+    runs-on: macos-15
+    timeout-minutes: 24
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build the pinned native pairing bridge
+        run: bash apps/ios/scripts/build-pairing-native.sh
+      - name: Run native interface tests on iOS 26.2
+        run: |
+          mkdir -p artifacts/simulator
+          set -o pipefail
+          xcodebuild -version
+          xcrun simctl list runtimes
+          device=$(xcrun simctl create USBLinkLab-CI com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-26-2)
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcodebuild -project apps/ios/USBLinkLab.xcodeproj -scheme USBLinkLab \
+            -destination "platform=iOS Simulator,id=$device" \
+            -parallel-testing-enabled NO -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 180 \
+            -resultBundlePath artifacts/simulator/USBLinkLab-Simulator.xcresult test \
+            | tee artifacts/simulator/test.log
+      - name: Export synthetic test evidence
+        if: always()
+        run: |
+          result=artifacts/simulator/USBLinkLab-Simulator.xcresult
+          if [ -d "$result" ]; then
+            mkdir -p artifacts/simulator/attachments
+            xcrun xcresulttool get test-results summary --path "$result" > artifacts/simulator/summary.json
+            xcrun xcresulttool export attachments --path "$result" --output-path artifacts/simulator/attachments
+          fi
+      - name: Upload simulator evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: USBLinkLab-iPhone17ProMax-simulator-evidence
+          path: |
+            artifacts/simulator/attachments/
+            artifacts/simulator/summary.json
+            artifacts/simulator/test.log
+          if-no-files-found: error
+          retention-days: 14

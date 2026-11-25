@@ -1,0 +1,15 @@
+{
+  "environment": "Windows x64 build 26300",
+  "pnp_status_at_attachment": "Apple Mobile Device USB Composite Device: OK",
+  "service_state_at_attachment": "Running",
+  "usb_discovery": {
+    "eligible_usb_devices": 1,
+    "code": "usb_device_listed",
+    "observed": "Apple multiplexer evidence. Application handshake and cable gates are pending."
+  },
+  "selected_device_listener_probe": {
+    "code": "listener_refused",
+    "detail": "Possible causes include a closed app, wrong iPhone port, or an Apple trust restriction."
+  },
+  "physical_application_transfer": "BLOCKED"
+}

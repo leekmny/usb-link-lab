@@ -1,0 +1,4 @@
+{"utc": "2026-11-25T09:51:39.259+00:00", "endpoint": "server", "direction": "incoming", "status": "complete", "item_id": "2952ac17edfbf6005a03fa3ac7f3eef4", "bytes": 41, "mode": 0, "kind": "text"}
+{"utc": "2026-11-25T09:51:39.260+00:00", "endpoint": "client", "direction": "incoming", "status": "complete", "item_id": "5c33323ca8fccc89b552b0a5c57aff00", "bytes": 41, "mode": 0, "kind": "text"}
+{"utc": "2026-11-25T09:51:39.260+00:00", "endpoint": "client", "direction": "outgoing", "status": "complete", "item_id": "2952ac17edfbf6005a03fa3ac7f3eef4", "bytes": 41, "mode": 0, "kind": "text"}
+{"utc": "2026-11-25T09:51:39.260+00:00", "endpoint": "server", "direction": "outgoing", "status": "complete", "item_id": "5c33323ca8fccc89b552b0a5c57aff00", "bytes": 41, "mode": 0, "kind": "text"}

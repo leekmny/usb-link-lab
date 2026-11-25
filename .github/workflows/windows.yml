@@ -1,0 +1,78 @@
+name: Windows build and test
+
+on:
+  push:
+    paths:
+      - apps/windows/**
+      - apps/raspberrypi/**
+      - capture/**
+      - evidence/hardware/**
+      - docs/acceptance.md
+      - native/usb_pairing/**
+      - protocol/**
+      - .github/workflows/windows*.yml
+  pull_request:
+    paths:
+      - apps/windows/**
+      - native/usb_pairing/**
+      - protocol/**
+      - .github/workflows/windows*.yml
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.13.8"
+          enable-cache: false
+      - name: Install locked Windows dependencies
+        run: ./apps/windows/windows.ps1 setup
+      - name: Run protocol, storage, transport and Qt tests
+        run: ./apps/windows/windows.ps1 test
+      - name: Build portable Windows bundle
+        run: ./apps/windows/windows.ps1 package
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-portable
+          path: |
+            apps/windows/dist/release/USBLinkLab-windows-x64.zip
+            apps/windows/dist/release/SHA256SUMS
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+  portable-smoke:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-portable
+          path: ${{ runner.temp }}/windows-portable
+      - name: Launch verified ZIP on a fresh runner with system-only PATH
+        run: |
+          $Runtime = Get-Item -LiteralPath (Join-Path $env:SystemRoot "System32/MSVCP140.dll")
+          Write-Output "Runner Visual C++ x64 runtime $($Runtime.VersionInfo.FileVersion)"
+          $Zip = Join-Path $env:RUNNER_TEMP "windows-portable/USBLinkLab-windows-x64.zip"
+          ./apps/windows/windows.ps1 smoke -Archive $Zip

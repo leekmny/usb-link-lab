@@ -1,0 +1,4 @@
+Capturing on 'Loopback: lo'
+File: /output/loopback-all/2-text/loopback.pcapng
+Packets: 1 Packets: 47 Packets captured: 47
+Packets received/dropped on interface 'Loopback: lo': 47/0 (pcap:0/dumpcap:0/flushed:0/ps_ifdrop:0) (100.0%)
