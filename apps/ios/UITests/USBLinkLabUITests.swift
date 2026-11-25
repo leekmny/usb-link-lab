@@ -106,6 +106,54 @@ final class USBLinkLabUITests: XCTestCase {
         XCTAssertFalse(row.exists)
     }
 
+    func testDeleteSelectedReceivedMessagesFromHistory() {
+        let app = start("received-multiple")
+        app.tabBars.buttons["기록"].tap()
+        let select = app.buttons["select-history-messages"]
+        XCTAssertTrue(select.waitForExistence(timeout: 10))
+        select.tap()
+
+        let delete = app.buttons["delete-selected-messages"]
+        XCTAssertFalse(delete.isEnabled)
+        let selectable = app.buttons.matching(identifier: "select-received-message")
+        XCTAssertEqual(selectable.count, 3)
+        let first = selectable.matching(NSPredicate(format: "label CONTAINS %@", "message-alpha.txt")).firstMatch
+        let second = selectable.matching(NSPredicate(format: "label CONTAINS %@", "message-beta.txt")).firstMatch
+        XCTAssertTrue(first.exists)
+        first.tap()
+        XCTAssertTrue(first.isSelected)
+        second.tap()
+        let count = app.staticTexts["history-selection-count"]
+        XCTAssertEqual(count.label, "2개 선택")
+        XCTAssertTrue(delete.isEnabled)
+
+        first.tap()
+        XCTAssertFalse(first.isSelected)
+        XCTAssertEqual(count.label, "1개 선택")
+        first.tap()
+
+        delete.tap()
+        let confirmation = app.alerts.firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["취소"].tap()
+        XCTAssertTrue(first.exists)
+        XCTAssertTrue(second.exists)
+        XCTAssertEqual(count.label, "2개 선택")
+
+        delete.tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["선택한 메시지 삭제"].tap()
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        XCTAssertFalse(count.exists)
+        let records = app.buttons.matching(identifier: "item-completed")
+        for name in ["message-alpha.txt", "message-beta.txt"] {
+            XCTAssertFalse(records.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists)
+        }
+        for name in ["message-gamma.txt", "received-note.txt", "sent-message.txt"] {
+            XCTAssertTrue(records.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.exists, name)
+        }
+    }
+
     private func start(_ state: String, dark: Bool = false, accessible: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--lab-synthetic", "--lab-state=\(state)", dark ? "--lab-dark" : "--lab-light"]

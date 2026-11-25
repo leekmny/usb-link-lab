@@ -321,6 +321,20 @@ final class LabModel: ObservableObject {
         }
     }
 
+    func deleteReceivedMessages(_ ids: Set<UUID>) async -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if synthetic {
+            let eligible = Set(items.lazy.filter(\.canDeleteReceivedMessage).map(\.id))
+            guard !ids.isEmpty, ids.isSubset(of: eligible) else { return false }
+            items.removeAll { ids.contains($0.id) }
+            return true
+        }
+        #endif
+        return await perform(or: .operationFailed) { server in
+            try await server.deleteReceivedMessages(ids)
+        }
+    }
+
     func retry(_ id: UUID) async -> Bool {
         await perform(or: .operationFailed) { server in
             try await server.retry(id)
@@ -381,6 +395,17 @@ final class LabModel: ObservableObject {
                 LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .text,
                         name: "", mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4)
             ]
+        } else if arguments.contains("--lab-state=received-multiple") {
+            items = ["message-gamma.txt", "message-beta.txt", "message-alpha.txt"].map { name in
+                LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .text,
+                        name: name, mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4)
+            }
+            items.insert(contentsOf: [
+                LabItem(id: UUID(), direction: .outgoing, mode: .aes256GCM, kind: .text,
+                        name: "sent-message.txt", mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4),
+                LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .file,
+                        name: "received-note.txt", mediaType: "text/plain", total: 4, state: .completed, bytes: 4)
+            ], at: 0)
         } else if arguments.contains("--lab-state=failure") {
             connection = LabConnection(code: "connection_closed", paired: true, paused: true, connected: false)
             items = [

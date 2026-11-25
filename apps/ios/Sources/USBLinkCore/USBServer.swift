@@ -517,23 +517,38 @@ public actor USBServer {
     }
 
     public func deleteReceivedMessage(_ id: UUID) throws {
-        guard session?.incoming?.local != id, receivedFiles[id] != nil,
-              let index = journal.entries.firstIndex(where: {
-                  $0.id == id && $0.direction == .incoming && $0.state == .completed && $0.metadata?.kind == .text
-              }) else { throw SessionFault.invalidState }
+        try deleteReceivedMessages([id])
+    }
+
+    public func deleteReceivedMessages(_ ids: Set<UUID>) throws {
+        guard !ids.isEmpty else { throw SessionFault.invalidState }
+        if let activeID = session?.incoming?.local, ids.contains(activeID) { throw SessionFault.invalidState }
+        let eligible = Set(journal.entries.lazy.filter {
+            ids.contains($0.id) && $0.direction == .incoming && $0.state == .completed
+                && $0.metadata?.kind == .text && receivedFiles[$0.id] != nil
+        }.map(\.id))
+        guard eligible == ids else { throw SessionFault.invalidState }
 
         let previous = journal
-        let pending = previous.removingReceived ?? []
-        journal.removingReceived = pending.union([id])
-        journal.entries.remove(at: index)
+        var pending = (previous.removingReceived ?? []).union(ids)
+        journal.removingReceived = pending
+        journal.entries.removeAll { $0.direction == .incoming && ids.contains($0.id) }
         do { try persist() } catch { journal = previous; throw error }
-        receivedFiles.removeValue(forKey: id)
         defer { publish() }
 
-        do { try store.removeReceived(id) } catch { throw SessionFault.storage }
+        for id in ids {
+            receivedFiles.removeValue(forKey: id)
+            do {
+                try store.removeReceived(id)
+                pending.remove(id)
+            } catch {
+                // Keep the marker until a later launch can finish disk cleanup.
+            }
+        }
         journal.removingReceived = pending.isEmpty ? nil : pending
-        // A failed cleanup write leaves a durable marker for the next launch.
+        // A failed cleanup write leaves durable markers for the next launch.
         try? persist()
+        guard pending.isDisjoint(with: ids) else { throw SessionFault.storage }
     }
 
     public func removeQueued(_ id: UUID) throws {

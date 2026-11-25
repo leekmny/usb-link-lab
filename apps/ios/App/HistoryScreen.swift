@@ -5,6 +5,16 @@ import USBLinkCore
 struct HistoryScreen: View {
     let language: LabLanguage
     @EnvironmentObject private var model: LabModel
+    @State private var selecting = false
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var confirmedIDs: Set<UUID> = []
+    @State private var confirmingDeletion = false
+
+    private var eligibleIDs: Set<UUID> {
+        Set(model.items.lazy.filter(\.canDeleteReceivedMessage).map(\.id))
+    }
+
+    private var selection: Set<UUID> { selectedIDs.intersection(eligibleIDs) }
 
     var body: some View {
         ScrollView {
@@ -17,7 +27,7 @@ struct HistoryScreen: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(model.items.reversed())) { item in
-                        TransferRowLink(item: item, language: language)
+                        historyRow(item)
                         Divider().padding(.leading, 44)
                     }
                 }
@@ -34,73 +44,196 @@ struct HistoryScreen: View {
         }
         .background(LabPalette.canvas)
         .navigationTitle(language.text(.history))
+        .toolbar {
+            if selecting || !eligibleIDs.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(language.text(selecting ? .done : .selectMessages)) {
+                        if selecting {
+                            endSelection()
+                        } else {
+                            selecting = true
+                        }
+                    }
+                    .disabled(model.busy)
+                    .accessibilityIdentifier(selecting ? "finish-history-selection" : "select-history-messages")
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if selecting { selectionBar }
+        }
+        .onChange(of: eligibleIDs) { _, eligible in
+            selectedIDs.formIntersection(eligible)
+            if eligible.isEmpty { endSelection() }
+        }
+        .onDisappear { endSelection() }
+        .alert(language.text(.confirmDeleteSelectedMessages), isPresented: $confirmingDeletion) {
+            Button(language.text(.deleteSelectedMessages), role: .destructive) {
+                let ids = confirmedIDs
+                confirmedIDs.removeAll()
+                Task {
+                    if await model.deleteReceivedMessages(ids) { endSelection() }
+                }
+            }
+            Button(language.text(.cancel), role: .cancel) { confirmedIDs.removeAll() }
+        } message: {
+            Text(language.text(.deleteSelectedMessagesDescription))
+        }
+    }
+
+    @ViewBuilder
+    private func historyRow(_ item: LabItem) -> some View {
+        if !selecting {
+            TransferRowLink(item: item, language: language)
+        } else if item.canDeleteReceivedMessage {
+            let selected = selectedIDs.contains(item.id)
+            Button {
+                if selected {
+                    selectedIDs.remove(item.id)
+                } else {
+                    selectedIDs.insert(item.id)
+                }
+            } label: {
+                TransferRowLabel(item: item, language: language, accessory: .selection(selected))
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("select-received-message")
+            .disabled(model.busy)
+        } else {
+            TransferRowLabel(item: item, language: language, accessory: .none)
+        }
+    }
+
+    private var selectionBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 16) {
+                selectionCount.fixedSize(horizontal: true, vertical: false)
+                Spacer(minLength: 8)
+                deleteButton.fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                selectionCount
+                deleteButton
+            }
+        }
+        .frame(maxWidth: 680, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .background(LabPalette.surface)
+        .overlay(alignment: .top) { Divider().overlay(LabPalette.stroke) }
+    }
+
+    private var selectionCount: some View {
+        Text(language.format(.selectedMessageCount, selection.count))
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(LabPalette.ink)
+            .accessibilityIdentifier("history-selection-count")
+    }
+
+    private var deleteButton: some View {
+        let disabled = selection.isEmpty || model.busy
+        return Button(role: .destructive) {
+            confirmedIDs = selection
+            confirmingDeletion = true
+        } label: {
+            Label(language.text(.deleteSelectedMessages), systemImage: "trash")
+                .font(.subheadline.weight(.semibold))
+                .multilineTextAlignment(.leading)
+                .frame(minHeight: 44)
+                .foregroundStyle(disabled ? LabPalette.muted : LabPalette.caution)
+                .contentShape(Rectangle())
+        }
+        .disabled(disabled)
+        .accessibilityIdentifier("delete-selected-messages")
+    }
+
+    private func endSelection() {
+        selecting = false
+        selectedIDs.removeAll()
+        confirmedIDs.removeAll()
+        confirmingDeletion = false
     }
 }
 
 struct TransferRowLink: View {
     let item: LabItem
     let language: LabLanguage
-    @State private var previewText: String?
 
     var body: some View {
         NavigationLink(value: item.id) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: item.symbol)
-                    .font(.body)
-                    .foregroundStyle(LabPalette.teal)
-                    .frame(width: 21, alignment: .leading)
-                    .padding(.top, 2)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(item.displayName(language))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(LabPalette.ink)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(2)
-                    if let previewText, !previewText.isEmpty {
-                        Text(previewText)
-                            .font(.subheadline)
-                            .foregroundStyle(LabPalette.ink)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                    }
-                    Label(language.text(item.direction == .incoming ? .incoming : .outgoing), systemImage: item.direction == .incoming ? "arrow.down.left" : "arrow.up.right")
-                        .foregroundStyle(LabPalette.muted)
-                        .font(.caption)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
-                            stateLabel
-                                .fixedSize(horizontal: true, vertical: false)
-                            modeLabel
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            stateLabel
-                            modeLabel
-                        }
-                    }
-                    if item.active {
-                        TransferProgress(item: item, language: language)
-                    } else if let total = item.total, item.kind != .text {
-                        Text(language.bytes(total))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(LabPalette.muted)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(LabPalette.muted)
-                    .padding(.top, 4)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            TransferRowLabel(item: item, language: language, accessory: .navigation)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("item-\(item.state.rawValue)")
+    }
+}
+
+private struct TransferRowLabel: View {
+    enum Accessory {
+        case navigation
+        case selection(Bool)
+        case none
+    }
+
+    let item: LabItem
+    let language: LabLanguage
+    let accessory: Accessory
+    @State private var previewText: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.symbol)
+                .font(.body)
+                .foregroundStyle(LabPalette.teal)
+                .frame(width: 21, alignment: .leading)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.displayName(language))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(LabPalette.ink)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                if let previewText, !previewText.isEmpty {
+                    Text(previewText)
+                        .font(.subheadline)
+                        .foregroundStyle(LabPalette.ink)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                }
+                Label(language.text(item.direction == .incoming ? .incoming : .outgoing), systemImage: item.direction == .incoming ? "arrow.down.left" : "arrow.up.right")
+                    .foregroundStyle(LabPalette.muted)
+                    .font(.caption)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        stateLabel
+                            .fixedSize(horizontal: true, vertical: false)
+                        modeLabel
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        stateLabel
+                        modeLabel
+                    }
+                }
+                if item.active {
+                    TransferProgress(item: item, language: language)
+                } else if let total = item.total, item.kind != .text {
+                    Text(language.bytes(total))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(LabPalette.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            accessoryIcon
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
         .task(id: item.fileURL) {
             guard item.kind == .text, let url = item.fileURL else {
                 previewText = nil
@@ -108,6 +241,26 @@ struct TransferRowLink: View {
             }
             let text = await Task.detached(priority: .utility) { AttachmentFiles.messageBody(url, excerpt: true) }.value
             if !Task.isCancelled { previewText = text }
+        }
+    }
+
+    @ViewBuilder
+    private var accessoryIcon: some View {
+        switch accessory {
+        case .navigation:
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(LabPalette.muted)
+                .padding(.top, 4)
+                .accessibilityHidden(true)
+        case .selection(let selected):
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(selected ? LabPalette.teal : LabPalette.muted)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+        case .none:
+            EmptyView()
         }
     }
 

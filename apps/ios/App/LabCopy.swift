@@ -36,6 +36,7 @@ enum LabCopy {
     case details, transferred, total, progressBytes, status, fileName, mediaType, origin, summary, acknowledgePending, completeLocal, completePlaintext, completeRemote
     case stopSession, stopDescription, keepGoing, remove, retry, retryTitle, retryDescription, duplicateWarning, retryQueued
     case deleteMessage, confirmDeleteMessage, deleteMessageDescription, cancel
+    case selectMessages, selectedMessageCount, deleteSelectedMessages, confirmDeleteSelectedMessages, deleteSelectedMessagesDescription
     case pairing, pairingExplanation, scanWindowsQR, enterPairingCode, showWindowsQR, invalidPairingQR
     case cameraDenied, cameraUnavailable, enterWindowsCode, pairingCodeField, invalidPairingCode
     case preparePairing, preparingPairing, qrRecognized, pairingReady, startWindowsPairing, pairingTimeRemaining
@@ -133,6 +134,11 @@ enum LabCopy {
         case .deleteMessage: ("메시지 삭제", "Delete message")
         case .confirmDeleteMessage: ("메시지를 삭제할까요?", "Delete this message?")
         case .deleteMessageDescription: ("이 기기의 기록과 저장된 본문이 삭제됩니다.", "This device will remove the record and its saved message.")
+        case .selectMessages: ("선택", "Select")
+        case .selectedMessageCount: ("%d개 선택", "%d selected")
+        case .deleteSelectedMessages: ("선택한 메시지 삭제", "Delete selected messages")
+        case .confirmDeleteSelectedMessages: ("선택한 메시지를 삭제할까요?", "Delete selected messages?")
+        case .deleteSelectedMessagesDescription: ("이 기기에서 선택한 메시지의 기록과 저장된 본문이 삭제됩니다.", "This device will remove the selected records and their saved messages.")
         case .cancel: ("취소", "Cancel")
         case .retry: ("다시 보내기", "Retry")
         case .retryTitle: ("%@으로 다시 보내기", "Retry with %@")
