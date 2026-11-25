@@ -110,6 +110,82 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: urls[2]), Data([42]))
     }
 
+    func testReceivedMessageDeletionRemovesOnlyThatItemAndSurvivesRelaunch() async throws {
+        let removedID = UUID()
+        let siblingID = UUID()
+        let attachmentID = UUID()
+        let payload = try commitMessage(removedID)
+        let sibling = try commitMessage(siblingID)
+        let file = try ItemMetadata(kind: .file, name: "sample.bin",
+                                    mediaType: "application/octet-stream", size: 1)
+        let attachment = try store.beginIncoming(attachmentID, metadata: file)
+        try attachment.append(Data([1]))
+        let attached = try attachment.commit(mode: .plaintext)
+
+        let server = try USBServer(root: root, secret: nil)
+        do {
+            try await server.deleteReceivedMessage(attachmentID)
+            XCTFail("Deletion accepted an attachment")
+        } catch SessionFault.invalidState { }
+        try await server.deleteReceivedMessage(removedID)
+        let current = await server.snapshot()
+        XCTAssertEqual(Set(current.records.map(\.id)), [siblingID, attachmentID])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: payload.deletingLastPathComponent().path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: attached.path))
+
+        let reopened = try USBServer(root: root, secret: nil)
+        let persisted = await reopened.snapshot()
+        XCTAssertEqual(Set(persisted.records.map(\.id)), [siblingID, attachmentID])
+        do {
+            try await reopened.deleteReceivedMessage(removedID)
+            XCTFail("Deletion accepted a stale ID")
+        } catch SessionFault.invalidState { }
+    }
+
+    func testRelaunchFinishesPendingMessageDeletion() async throws {
+        let id = UUID()
+        let content = try commitMessage(id)
+        let url = root.appendingPathComponent("queue.json")
+        var journal = QueueJournal()
+        journal.removingReceived = [id]
+        try JSONEncoder().encode(journal).write(to: url, options: .atomic)
+
+        let reopened = try USBServer(root: root, secret: nil)
+        let snapshot = await reopened.snapshot()
+        XCTAssertTrue(snapshot.records.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: content.deletingLastPathComponent().path))
+        let cleared = try JSONDecoder().decode(QueueJournal.self, from: Data(contentsOf: url))
+        XCTAssertNil(cleared.removingReceived)
+    }
+
+    func testJournalWriteFailureLeavesReceivedMessageInHistory() async throws {
+        let id = UUID()
+        let content = try commitMessage(id)
+        let server = try USBServer(root: root, secret: nil)
+        let journal = root.appendingPathComponent("queue.json")
+        try FileManager.default.removeItem(at: journal)
+        try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: false)
+
+        do {
+            try await server.deleteReceivedMessage(id)
+            XCTFail("Deletion accepted a failed journal update")
+        } catch SessionFault.storage { }
+
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(snapshot.records.first?.id, id)
+        XCTAssertEqual(try Data(contentsOf: content), Data("test".utf8))
+    }
+
+    private func commitMessage(_ id: UUID) throws -> URL {
+        let data = Data("test".utf8)
+        let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8",
+                                        size: UInt64(data.count))
+        let sink = try store.beginIncoming(id, metadata: metadata)
+        try sink.append(data)
+        return try sink.commit(mode: .aes256GCM)
+    }
+
     func testEmptyTextCommitsAndPublicFixtureIsRejectedViaLiveKeychain() throws {
         let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8", size: 0)
         let sink = try store.beginIncoming(UUID(), metadata: metadata)
