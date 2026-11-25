@@ -525,7 +525,7 @@ public actor USBServer {
         if let activeID = session?.incoming?.local, ids.contains(activeID) { throw SessionFault.invalidState }
         let eligible = Set(journal.entries.lazy.filter {
             ids.contains($0.id) && $0.direction == .incoming && $0.state == .completed
-                && $0.metadata?.kind == .text && receivedFiles[$0.id] != nil
+                && $0.metadata?.kind == .text && self.receivedFiles[$0.id] != nil
         }.map(\.id))
         guard eligible == ids else { throw SessionFault.invalidState }
 
