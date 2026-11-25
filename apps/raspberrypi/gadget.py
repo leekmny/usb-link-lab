@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import socket
+import stat
 import subprocess
 import sys
 
@@ -71,23 +72,20 @@ def owned_loopback_listener(rows, port, uid):
     return False
 
 
-def unit_uid(properties):
-    fields = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
-    value = fields.get("UID", "")
-    if fields.get("ActiveState") == "active" and value.isdecimal() and 0 < int(value) < 4294967295:
-        return int(value)
+def directory_uid(info):
+    if stat.S_ISDIR(info.st_mode) and not info.st_mode & 0o022 and 0 < info.st_uid < 4294967295:
+        return info.st_uid
     return None
 
 
 def iproxy_owns_port(port):
     try:
-        # Pi OS can have only 'files' in nsswitch.conf. PID 1 owns the dynamic UID mapping.
-        props = subprocess.check_output(["systemctl", "show", "ulab-iproxy.service",
-                                         "-p", "UID", "-p", "ActiveState"], text=True, timeout=2)
-        uid = unit_uid(props)
+        # PID 1 creates this dedicated RuntimeDirectory inside root-owned /run.
+        # Sandboxed relay processes need neither NSS integration nor system bus access.
+        uid = directory_uid(Path("/run/ulab-iproxy").lstat())
         if uid is None:
             return False
         with Path("/proc/net/tcp").open() as table:
             return owned_loopback_listener(table, port, uid)
-    except (OSError, subprocess.SubprocessError):
+    except OSError:
         return False

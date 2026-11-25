@@ -5,6 +5,8 @@ ConditionPathExists=/etc/ulab/iphone.udid
 StartLimitIntervalSec=0
 
 [Service]
+RuntimeDirectory=ulab-iproxy
+RuntimeDirectoryMode=0555
 Type=exec
 DynamicUser=yes
 User=ulab-iproxy

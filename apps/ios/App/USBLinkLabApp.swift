@@ -7,7 +7,7 @@ import USBLinkCore
 struct USBLinkLabApp: App {
     @StateObject private var model = LabModel()
     @AppStorage("language") private var language: LabLanguage = .ko
-    @AppStorage("appearance") private var appearance: LabAppearance = .system
+    @AppStorage("appearance") private var appearance: LabAppearance = .light
     @Environment(\.scenePhase) private var scenePhase
 
     private var shownLanguage: LabLanguage { model.synthetic ? .ko : language }

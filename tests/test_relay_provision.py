@@ -12,12 +12,12 @@ sys.path.insert(0, str(PI))
 
 
 class ProvisionTests(unittest.TestCase):
-    def test_dynamic_unit_uid_from_systemd_when_nss_only_has_files(self):
-        from gadget import unit_uid
-        self.assertEqual(unit_uid("ActiveState=active\nUID=62962\n"), 62962)
-        for props in ("ActiveState=inactive\nUID=62962", "ActiveState=active\nUID=0",
-                      "ActiveState=active\nUID=4294967295", ""):
-            self.assertIsNone(unit_uid(props))
+    def test_dynamic_unit_uid_requires_private_systemd_runtime_directory(self):
+        from gadget import directory_uid
+        from types import SimpleNamespace
+        self.assertEqual(directory_uid(SimpleNamespace(st_mode=0o40555, st_uid=62962)), 62962)
+        for mode, uid in ((0o120777, 62962), (0o40777, 62962), (0o40555, 0), (0o100644, 62962)):
+            self.assertIsNone(directory_uid(SimpleNamespace(st_mode=mode, st_uid=uid)))
 
     def test_only_usb_device_never_picks_first_from_multiple(self):
         self.assertIsNotNone(importlib.util.find_spec("configure"), "provisioning is missing")

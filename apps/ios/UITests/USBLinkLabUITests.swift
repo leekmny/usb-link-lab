@@ -28,15 +28,15 @@ final class USBLinkLabUITests: XCTestCase {
     }
 
     func testSyntheticConnectedProgressAndFailureCapture() {
-        let progress = start("transfer", dark: true)
+        let progress = start("transfer")
         let status = progress.descendants(matching: .any)["connection-status"].firstMatch
         XCTAssertTrue(status.waitForExistence(timeout: 10))
         XCTAssertEqual(status.label, "연결됨")
-        capture("02-connected-dark", progress)
+        capture("02-connected-light", progress)
 
         progress.tabBars.buttons["기록"].tap()
         XCTAssertTrue(progress.buttons["item-sending"].waitForExistence(timeout: 10))
-        capture("03-active-transfer-dark", progress)
+        capture("03-active-transfer-light", progress)
         progress.terminate()
 
         let failure = start("failure", accessible: true)
