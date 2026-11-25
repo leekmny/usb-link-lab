@@ -53,10 +53,23 @@ public actor USBServer {
         if FileManager.default.fileExists(atPath: url.path) {
             journal = try JSONDecoder().decode(QueueJournal.self, from: Data(contentsOf: url))
         }
+        if let pending = journal.removingReceived {
+            var remaining = pending
+            journal.entries.removeAll { $0.direction == .incoming && pending.contains($0.id) }
+            for id in pending {
+                do {
+                    try store.removeReceived(id)
+                    remaining.remove(id)
+                } catch {
+                    // Leave the ID in the journal so later launches can retry cleanup.
+                }
+            }
+            journal.removingReceived = remaining.isEmpty ? nil : remaining
+        }
         var unavailable = Set<UUID>()
         let committed = try store.loadReceived { unavailable.insert($0) }
         var files: [UUID: URL] = [:]
-        for row in committed {
+        for row in committed where journal.removingReceived?.contains(row.id) != true {
             files[row.id] = row.fileURL
             if let index = journal.entries.firstIndex(where: { $0.id == row.id }) {
                 journal.entries[index].state = .completed
@@ -96,7 +109,7 @@ public actor USBServer {
         self.storeSecret = storeSecret
         self.invitationLifetime = invitationLifetime
         self.usesSystemServices = usesSystemServices
-        if !unavailable.isEmpty { self.status = "storage_error" }
+        if !unavailable.isEmpty || journal.removingReceived != nil { self.status = "storage_error" }
     }
 
     func persist() throws {
@@ -501,6 +514,26 @@ public actor USBServer {
         }
         publish()
         if let session { scheduleNext(session) }
+    }
+
+    public func deleteReceivedMessage(_ id: UUID) throws {
+        guard session?.incoming?.local != id, receivedFiles[id] != nil,
+              let index = journal.entries.firstIndex(where: {
+                  $0.id == id && $0.direction == .incoming && $0.state == .completed && $0.metadata?.kind == .text
+              }) else { throw SessionFault.invalidState }
+
+        let previous = journal
+        let pending = previous.removingReceived ?? []
+        journal.removingReceived = pending.union([id])
+        journal.entries.remove(at: index)
+        do { try persist() } catch { journal = previous; throw error }
+        receivedFiles.removeValue(forKey: id)
+        defer { publish() }
+
+        do { try store.removeReceived(id) } catch { throw SessionFault.storage }
+        journal.removingReceived = pending.isEmpty ? nil : pending
+        // A failed cleanup write leaves a durable marker for the next launch.
+        try? persist()
     }
 
     public func removeQueued(_ id: UUID) throws {

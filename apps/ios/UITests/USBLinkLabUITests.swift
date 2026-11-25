@@ -86,6 +86,26 @@ final class USBLinkLabUITests: XCTestCase {
         XCTAssertFalse(prepare.isEnabled)
     }
 
+    func testConfirmOrCancelReceivedMessageDeletion() {
+        let app = start("received")
+        app.tabBars.buttons["기록"].tap()
+        let row = app.buttons["item-completed"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let delete = app.buttons["delete-received-message"]
+        if !delete.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(delete.isHittable)
+        delete.tap()
+        let confirmation = app.alerts.firstMatch
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        confirmation.buttons["취소"].tap()
+        XCTAssertTrue(delete.exists)
+        delete.tap()
+        confirmation.buttons["메시지 삭제"].tap()
+        XCTAssertTrue(app.navigationBars["기록"].waitForExistence(timeout: 5))
+        XCTAssertFalse(row.exists)
+    }
+
     private func start(_ state: String, dark: Bool = false, accessible: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--lab-synthetic", "--lab-state=\(state)", dark ? "--lab-dark" : "--lab-light"]

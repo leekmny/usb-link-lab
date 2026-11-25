@@ -85,6 +85,10 @@ struct LabStore: Sendable {
         }
     }
 
+    func removeReceived(_ id: UUID) throws {
+        try Self.removeIfPresent(received.appendingPathComponent(id.uuidString, isDirectory: true))
+    }
+
     func beginIncoming(_ id: UUID, metadata: ItemMetadata) throws -> IncomingSink {
         try Self.checkCapacity(metadata.size + 4096, at: receiving)
         let pending = receiving.appendingPathComponent(id.uuidString, isDirectory: true)

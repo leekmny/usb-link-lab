@@ -85,6 +85,7 @@ struct LabItem: Identifiable {
     var active: Bool { state == .sending || state == .receiving }
     var needsAttention: Bool { state == .unconfirmed || state == .interrupted }
     var canRetry: Bool { direction == .outgoing && needsAttention }
+    var canDeleteReceivedMessage: Bool { direction == .incoming && state == .completed && kind == .text }
     var downloadable: Bool { direction == .incoming && state == .completed && kind != .text && fileURL != nil }
 
     var status: LabCopy {
@@ -307,6 +308,19 @@ final class LabModel: ObservableObject {
         }
     }
 
+    func deleteReceivedMessage(_ id: UUID) async -> Bool {
+        #if DEBUG && targetEnvironment(simulator)
+        if synthetic {
+            guard let index = items.firstIndex(where: { $0.id == id && $0.canDeleteReceivedMessage }) else { return false }
+            items.remove(at: index)
+            return true
+        }
+        #endif
+        return await perform(or: .operationFailed) { server in
+            try await server.deleteReceivedMessage(id)
+        }
+    }
+
     func retry(_ id: UUID) async -> Bool {
         await perform(or: .operationFailed) { server in
             try await server.retry(id)
@@ -361,6 +375,11 @@ final class LabModel: ObservableObject {
             items = [
                 LabItem(id: UUID(), direction: .outgoing, mode: .aes256GCM, kind: .image, name: "color-target.png", mediaType: "image/png", total: 2_097_152, state: .sending, bytes: 1_245_184),
                 LabItem(id: UUID(), direction: .incoming, mode: .hmacSHA256, kind: .file, name: "reference.txt", mediaType: "text/plain", total: 286_720, state: .receiving, bytes: 65_536)
+            ]
+        } else if arguments.contains("--lab-state=received") {
+            items = [
+                LabItem(id: UUID(), direction: .incoming, mode: .aes256GCM, kind: .text,
+                        name: "", mediaType: "text/plain; charset=utf-8", total: 4, state: .completed, bytes: 4)
             ]
         } else if arguments.contains("--lab-state=failure") {
             connection = LabConnection(code: "connection_closed", paired: true, paused: true, connected: false)

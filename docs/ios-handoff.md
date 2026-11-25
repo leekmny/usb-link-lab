@@ -6,9 +6,9 @@
 - Contract: `ULAB1-20261124-R1`; SHA-256 `535a818b4e76c82bf7c782f9aa9482730b13865e1ddb8c3fb0cba2c946a6596f`
 - App bundle ID: `org.usblinklab.ios`; deployment target: iOS 17; device architecture: arm64
 - Source: `apps/ios/USBLinkLab.xcodeproj`, `App.xcconfig`, and local `USBLinkCore` Swift package. The app and core use Apple frameworks and the local, static ULABPairing XCFramework built from pinned Mbed TLS.
-- Latest unsigned build [iPhone 0.1.1](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.1) from `6cd05258b9922d90a6f7ff49cf671208d5f8db0c`.
-- Release IPA SHA-256 `07d254ec8b24ac0058d3b75fc88a79e094682a636009def148203a852014cdb8`.
-- Physical signing and launch used [iPhone 0.1.0](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.1.0) from `088a335389a33429d14eccce229ed390d1572d1b`. Both versions use the same ULAB contract.
+- Pairing build [iPhone 0.2.0](https://github.com/leekmny/usb-link-lab/releases/tag/ios-v0.2.0) from `15abf767ec7fe789412e8173265476c1b6458984`.
+- Release IPA SHA-256 `3ec654b357440fac29240e777fe8c03e4d415b9cf34fb72614948c55d380b822`.
+- An owner-signed 0.2.0 candidate passed QR registration and directional text tests on iPhone 17 Pro Max. [Physical evidence](ios-evidence/pairing-device.md).
 - QR and six-digit setup [USB pairing for iPhone](ios-pairing.md).
 - Evidence: [verification matrix](ios-verification-matrix.md) and [iPhone workflow](https://github.com/leekmny/usb-link-lab/actions/workflows/ios.yml)
 

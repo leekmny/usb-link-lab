@@ -60,6 +60,8 @@ struct JournalEntry: Codable {
 struct QueueJournal: Codable {
     var entries: [JournalEntry] = []
     var paused = false
+    // Recorded before disk cleanup so an interrupted deletion cannot restore a message.
+    var removingReceived: Set<UUID>?
 }
 
 struct SessionBudget {

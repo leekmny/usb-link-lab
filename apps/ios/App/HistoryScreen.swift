@@ -163,6 +163,7 @@ struct ItemDetail: View {
     @State private var retrying = false
     @State private var retryQueued = false
     @State private var stopping = false
+    @State private var deletingMessage = false
     @State private var exporting = false
     @State private var export: ExportAttachment?
     @State private var saved = false
@@ -202,6 +203,16 @@ struct ItemDetail: View {
             Button(language.text(.keepGoing), role: .cancel) {}
         } message: {
             Text(language.text(.stopDescription))
+        }
+        .alert(language.text(.confirmDeleteMessage), isPresented: $deletingMessage) {
+            Button(language.text(.deleteMessage), role: .destructive) {
+                Task {
+                    if await model.deleteReceivedMessage(id) { dismiss() }
+                }
+            }
+            Button(language.text(.cancel), role: .cancel) {}
+        } message: {
+            Text(language.text(.deleteMessageDescription))
         }
         .sheet(item: $export) { result in
             if result.share {
@@ -319,6 +330,13 @@ struct ItemDetail: View {
             }
             .buttonStyle(LabPrimaryButton())
             .disabled(model.busy || !model.connection.paired)
+        } else if item.canDeleteReceivedMessage {
+            Button(role: .destructive) { deletingMessage = true } label: {
+                Label(language.text(.deleteMessage), systemImage: "trash")
+            }
+            .buttonStyle(LabFieldButton())
+            .disabled(model.busy)
+            .accessibilityIdentifier("delete-received-message")
         } else if item.downloadable {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {

@@ -35,6 +35,7 @@ enum LabCopy {
     case queued, sending, receiving, delivered, checked, interrupted, unconfirmed
     case details, transferred, total, progressBytes, status, fileName, mediaType, origin, summary, acknowledgePending, completeLocal, completePlaintext, completeRemote
     case stopSession, stopDescription, keepGoing, remove, retry, retryTitle, retryDescription, duplicateWarning, retryQueued
+    case deleteMessage, confirmDeleteMessage, deleteMessageDescription, cancel
     case pairing, pairingExplanation, scanWindowsQR, enterPairingCode, showWindowsQR, invalidPairingQR
     case cameraDenied, cameraUnavailable, enterWindowsCode, pairingCodeField, invalidPairingCode
     case preparePairing, preparingPairing, qrRecognized, pairingReady, startWindowsPairing, pairingTimeRemaining
@@ -129,6 +130,10 @@ enum LabCopy {
         case .stopDescription: ("현재 세션의 보내기와 받기를 모두 중단합니다. 대기 중인 항목은 보관되며 직접 대기열을 재개할 수 있습니다.", "Stops active sends and receives in this session. Waiting items are kept until you resume the queue.")
         case .keepGoing: ("계속 전송", "Keep transferring")
         case .remove: ("대기열에서 제거", "Remove from queue")
+        case .deleteMessage: ("메시지 삭제", "Delete message")
+        case .confirmDeleteMessage: ("메시지를 삭제할까요?", "Delete this message?")
+        case .deleteMessageDescription: ("이 기기의 기록과 저장된 본문이 삭제됩니다.", "This device will remove the record and its saved message.")
+        case .cancel: ("취소", "Cancel")
         case .retry: ("다시 보내기", "Retry")
         case .retryTitle: ("%@으로 다시 보내기", "Retry with %@")
         case .retryDescription: ("보호 방식과 내용을 유지해 새로 인증한 세션에서 처음부터 보냅니다.", "Sends from the beginning in a fresh authenticated session with the same protection and content.")
