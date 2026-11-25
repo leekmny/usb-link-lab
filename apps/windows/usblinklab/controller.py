@@ -15,6 +15,7 @@ import time
 from PySide6.QtCore import QObject, Signal
 
 from . import transport
+from .pi_transport import PathSettings
 from .pairing import Pairing, PairingError, PairingStore, atomic_save, encode_pairing_qr
 from .pin_pairing import CODE_TTL, PAIRING_TIMEOUT, PairingBackendError, PairingProtocolError, pair_client
 from .protocol import AuthenticationError, Mode, ProtocolError
@@ -29,6 +30,7 @@ RECONNECT_MAX_DELAY = 8
 RECONNECT_TRANSPORT_ERRORS = {
     "service_stopped", "service_unavailable", "mux_unavailable", "mux_timeout",
     "device_gone", "listener_refused", "connect_rejected",
+    "pi_relay_unavailable", "pi_adapter_missing", "pi_route_unavailable",
 }
 DELETABLE_OUTGOING_HISTORY = RETRYABLE | {"complete", "paused"}
 
@@ -61,10 +63,11 @@ class PendingPairing:
 class Controller(QObject):
     changed = Signal(str, object)
 
-    def __init__(self, root: Path, *, usb=transport):
+    def __init__(self, root: Path, *, usb=None, path_settings=None):
         super().__init__()
         self.root = root
-        self.usb = usb
+        self.path_settings = path_settings if path_settings is not None else PathSettings.load(root)
+        self.usb = self.path_settings.provider(root) if usb is None else usb
         self.loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, name="USBLinkLab worker", daemon=True)
         self._main = None
@@ -188,6 +191,23 @@ class Controller(QObject):
             "status": entry.status, "transferred": transferred, "path": None,
         })
 
+    async def _configure_path(self, settings):
+        if (self.refreshing or self.pending_pairing is not None or self.enqueued
+                or self.connection and not self.connection.done()):
+            self.changed.emit("error", "pi_path_busy")
+            return
+        try:
+            settings.save(self.root)
+        except transport.TransportError as error:
+            self.changed.emit("error", error.code)
+            return
+        self.path_settings = settings
+        self.usb = settings.provider(self.root)
+        self.devices = {}
+        self.changed.emit("devices", [])
+        self.changed.emit("path", settings)
+        await self._discover()
+
     async def _discover(self):
         if self.refreshing or self.connection and not self.connection.done():
             return
@@ -213,6 +233,9 @@ class Controller(QObject):
         self._new_pairing(device_id, request_id, "qr")
 
     def _new_pairing(self, device_id, request_id, method):
+        if self.path_settings.mode == "relay" and self.path_settings.reuse_direct:
+            self._pairing_request_error(device_id, request_id, "pi_reuse_only")
+            return
         if self.storage is None:
             self._pairing_request_error(device_id, request_id, "storage_failed")
             return

@@ -32,6 +32,8 @@ verify their contents.
 
 ## Apple USB prerequisites and probe
 
+These prerequisites apply to **Direct USB to iPhone**, the default connection path.
+
 Install Apple Devices separately, attach an unlocked iPhone with a data-capable
 cable, approve the phone's Trust This Computer prompt when shown, and confirm
 the phone appears in Apple Devices. If you attached the phone to WSL with
@@ -78,3 +80,15 @@ To remove one received text message from its details, choose Delete message and 
 ## Reconnect over USB
 
 After an authenticated session drops, the Windows app automatically retries the same paired iPhone with increasing delays of up to 8 seconds between attempts. Keep the iPhone app open and the device unlocked for a new USB session. Use Disconnect or Cancel session to stop automatic retries. Interrupted or unconfirmed transfers require an explicit retry.
+
+## Raspberry Pi USB relay on Windows
+
+1. Connect the Pi gadget to Windows and the iPhone to the Pi's USB-A port. On the Pi, confirm the gadget IPv4 address and the port configured for the relay. Keep the iPhone unlocked with USBLinkLab in the foreground.
+2. Open **설정 / Settings** in Windows. Choose **Raspberry Pi USB 중계 / Raspberry Pi USB relay**, enter the Pi's **gadget IPv4 address** and the relay port (default **43123**). Choose **적용 / Apply**. The discovery step reads local Windows routing and adapter state without opening the iPhone application port.
+3. Choose the discovered adapter in the device selector. Its entry shows the Windows source and Pi destination. The diagnostics panel also shows the port. A verified wired route enables the next step. Only the authenticated ULAB handshake changes the status to **iPhone app authenticated**.
+4. To use the same iPhone that already authenticates in direct mode, enable **Use the saved direct iPhone pairing** and choose **Connect**. This permits only saved-key authentication. Existing queued jobs keep their original peer and secret binding. The worker resumes eligible items only after that peer completes the handshake. Interrupted or unconfirmed items still require explicit retry.
+5. For independent enrollment, leave that option clear and use **Pair**. QR and six-digit enrollment use the existing endpoint flows. The new pairing occupies a separate current-user DPAPI slot and preserves the direct Windows credential and queue. An iPhone with a single saved credential can replace its previous credential during re-enrollment. Use the saved direct pairing option when you want to preserve access to the existing iPhone session profile.
+
+Pi mode requires the Raspberry Pi USB network driver and Windows PowerShell networking cmdlets. It runs independently of Apple's Windows service. The application accepts numeric IPv4 destinations on the directly attached, active Raspberry Pi gadget (USB VID 2E8A, PID 0013). It checks the system-selected address, hardware identity and on-link route before dialing, pins the socket with `IP_UNICAST_IF`, binds the verified source IPv4 and checks both actual socket endpoints and the OS route after connecting. A changed physical adapter requires fresh discovery. No default route or firewall rule is changed. [Windows route selection](https://learn.microsoft.com/en-us/powershell/module/nettcpip/find-netroute) · [Winsock IPv4 interface pinning](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options)
+
+Path settings persist locally in `%LOCALAPPDATA%\USBLinkLab\transport.json`. The standalone relay credential uses `relay-pairing.dpapi`. Legacy `pairing.dpapi` and outbox records retain their format. Reconfiguring the Pi address does not enroll or identify an iPhone. A corrupted path setting leaves the application disconnected until a valid path is saved. The existing `windows.ps1 probe` command diagnoses the direct Apple connection. Use the application's device search and diagnostics for the Pi path.

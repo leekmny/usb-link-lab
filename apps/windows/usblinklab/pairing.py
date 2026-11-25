@@ -16,6 +16,11 @@ class PairingError(ValueError):
     pass
 
 
+# Direct device IDs are hashes of USB identities. The relay slot is local and
+# independent of DHCP, the Pi's address and its Windows adapter.
+RELAY_PEER = "ulab-relay-iphone"
+
+
 
 def encode_pairing_qr(secret: bytes) -> str:
     """Encode the full provisioned key with a strict, non-link QR marker."""
@@ -106,11 +111,22 @@ class PairingStore:
 
     def save(self, pairing: Pairing) -> None:
         record = {"device": pairing.device, "secret": pairing.secret.hex()}
-        atomic_save(self.path, _dpapi(json.dumps(record).encode(), protect=True))
+        atomic_save(self._path_for(pairing.device), _dpapi(json.dumps(record).encode(), protect=True))
+
+    def _path_for(self, device: str) -> Path:
+        return self.path.with_name("relay-pairing.dpapi") if device == RELAY_PEER else self.path
 
     def load(self, device: str) -> Pairing | None:
+        pairing = self._read(self._path_for(device))
+        return pairing if pairing and pairing.device == device else None
+
+    def direct(self) -> Pairing | None:
+        """Read the original direct record for an explicitly selected saved-key reconnect."""
+        return self._read(self.path)
+
+    def _read(self, path: Path) -> Pairing | None:
         try:
-            with self.path.open("rb") as file:
+            with path.open("rb") as file:
                 data = file.read(16385)
         except FileNotFoundError:
             return None
@@ -121,4 +137,4 @@ class PairingStore:
             pairing = Pairing(record["device"], bytes.fromhex(record["secret"]))
         except (KeyError, TypeError, ValueError, UnicodeError) as exc:
             raise PairingError("invalid_record") from exc
-        return pairing if pairing.device == device else None
+        return pairing

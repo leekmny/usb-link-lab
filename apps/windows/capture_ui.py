@@ -5,10 +5,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 
-from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtWidgets import QApplication, QDialog
 
 from usblinklab.controller import Controller
+from usblinklab.pi_transport import PathSettings
 from usblinklab.protocol import Mode
 from usblinklab.window import Window
 
@@ -16,8 +17,14 @@ from usblinklab.window import Window
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", type=Path)
-    parser.add_argument("scenario", choices=["prerequisite", "light-narrow", "synthetic-active"])
+    parser.add_argument("scenario", choices=["prerequisite", "light-narrow", "synthetic-active",
+                                             "relay-route", "relay-settings"])
+    parser.add_argument("--gadget-address", help="Confirmed IPv4 address on the Pi's USB gadget")
+    parser.add_argument("--gadget-port", default=43123, type=int)
     args = parser.parse_args()
+    relay = args.scenario.startswith("relay-")
+    if relay and not args.gadget_address:
+        parser.error("relay capture requires --gadget-address")
     app = QApplication([])
     app.setStyle("Fusion")
     if app.platformName() != "windows":
@@ -30,10 +37,8 @@ def main():
             settings.setValue("large", True)
             settings.setValue("language", 1)
             settings.sync()
-        if args.scenario == "synthetic-active":
-            settings = QSettings(str(root / "settings.ini"), QSettings.Format.IniFormat)
-            settings.setValue("theme", "dark")
-            settings.sync()
+        if relay:
+            PathSettings("relay", args.gadget_address, args.gadget_port).save(root)
         bridge = Controller(root)
         window = Window(bridge, root)
         if args.scenario == "light-narrow":
@@ -61,19 +66,37 @@ def main():
                 window._open_details()
             else:
                 bridge.start()
-                deadline = time.monotonic() + 6
+                deadline = time.monotonic() + 15
                 while window.connection_state in {"disconnected", "scanning"} and time.monotonic() < deadline:
                     app.processEvents()
                     time.sleep(0.02)
                 if window.connection_state in {"disconnected", "scanning"}:
                     raise RuntimeError("Native USB prerequisite scan did not finish")
+                if relay:
+                    if window.connection_state != "select_device" or window.devices.count() != 2:
+                        raise RuntimeError(f"Could not verify the native gadget path: {window.connection_state}")
+                    window.devices.setCurrentIndex(1)
                 window.diagnostic_toggle.setChecked(True)
             app.processEvents()
             args.path.parent.mkdir(parents=True, exist_ok=True)
-            if not window.grab().save(str(args.path), "PNG"):
+            if args.scenario == "relay-settings":
+                captured = []
+                def capture_dialog():
+                    dialog = window.findChild(QDialog)
+                    if dialog is not None:
+                        captured.append(dialog.grab())
+                        dialog.reject()
+                QTimer.singleShot(150, capture_dialog)
+                window._settings_dialog()
+                if not captured:
+                    raise RuntimeError("Native relay settings dialog did not open")
+                image = captured[0]
+            else:
+                image = window.grab()
+            if not image.save(str(args.path), "PNG"):
                 raise RuntimeError("Could not save native Windows screenshot")
             print(f"{args.scenario}: {app.platformName()}, {window.connection_state}, "
-                  f"scale={window.devicePixelRatioF():.2f}, {window.grab().size()}")
+                  f"scale={window.devicePixelRatioF():.2f}, {image.size()}")
         finally:
             window.close()
             bridge.shutdown()

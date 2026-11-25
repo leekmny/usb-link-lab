@@ -11,7 +11,8 @@ from PySide6.QtGui import (
     QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QSpinBox,
     QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -19,6 +20,8 @@ from PySide6.QtWidgets import (
 from . import PROTOCOL_REVISION, __version__
 from .icons import glyph, icon
 from .labels import COPY
+from .pi_transport import PathSettings
+from .transport import TransportError
 from .protocol import Mode
 from .theme import THEMES, stylesheet
 
@@ -228,6 +231,7 @@ class Window(QMainWindow):
     def __init__(self, bridge, root):
         super().__init__()
         self.bridge = bridge
+        self.path_settings = getattr(bridge, "path_settings", PathSettings())
         self.preferences = QSettings(str(root / "settings.ini"), QSettings.Format.IniFormat)
         self.language = self.preferences.value("language", 0, type=int) % 2
         self.theme = self.preferences.value("theme", "light")
@@ -305,7 +309,7 @@ class Window(QMainWindow):
             side.addWidget(navigation)
         side.addSpacing(20)
         device_header = QHBoxLayout()
-        self.device_title = label(size=11)
+        self.device_title = label(size=11, wrap=True)
         self.refresh = self._button("refresh", lambda: self.bridge.submit("discover"),
                                     icon="refresh", name="iconButton")
         self.refresh.setFixedSize(34, 30)
@@ -537,7 +541,7 @@ class Window(QMainWindow):
                 button.setText("" if button is self.refresh else text)
                 button.setAccessibleName(text)
                 button.setToolTip(text)
-        self.device_title.setText(self.tr_key("device"))
+        self._update_path_caption()
         self.devices.setAccessibleName(self.tr_key("device"))
         if self.devices.count() == 0:
             self.devices.addItem(self.tr_key("none"), None)
@@ -676,6 +680,10 @@ class Window(QMainWindow):
             parts.append(self.tr_key("messages_delete_pending").format(count=result["pending"]))
         return " ".join(parts)
 
+    def _update_path_caption(self):
+        key = "pi_short" if self.path_settings.mode == "relay" else "path_" + self.path_settings.mode
+        self.device_title.setText(self.tr_key(key))
+
     def _update_state(self):
         state = self.connection_state
         if state == "connected":
@@ -691,12 +699,19 @@ class Window(QMainWindow):
         self.connection_caption.setText(self.tr_key(caption))
         self.connection_caption.setStyleSheet(f"color: {self.colors[tone]}")
         show_help = state not in ACTIVE_CONNECTIONS | {"scanning", "paired", "disconnected"}
-        self.connection_status.setText(self.tr_key(state) if show_help else "")
+        pi = self.path_settings.mode == "relay"
+        help_key = "pi_route_ready" if pi and state == "select_device" else state
+        self.connection_status.setText(self.tr_key(help_key) if show_help else "")
         self.connection_status.setVisible(show_help)
-        self.diagnostic_text.setText(
-            f"USBLinkLab {__version__}  /  {PROTOCOL_REVISION}\n"
-            f"{self.tr_key('usb_only')}\n{self.connection_state}"
-        )
+        details = [f"USBLinkLab {__version__}  /  {PROTOCOL_REVISION}",
+                   self.tr_key("path_" + self.path_settings.mode)]
+        if pi:
+            if self.devices.count() > 1:
+                details.append(f"{self.devices.itemText(1)}:{self.path_settings.port}")
+            else:
+                details.append(f"{self.path_settings.destination}:{self.path_settings.port}")
+        details.append(state)
+        self.diagnostic_text.setText("\n".join(details))
         feedback_color = self.colors.get(self.feedback_type, self.colors["secondary"])
         self.feedback_label.setStyleSheet(f"color: {feedback_color}; font-size: {self.body_pixels}px")
         self.feedback_label.setText(self._feedback_text())
@@ -727,7 +742,8 @@ class Window(QMainWindow):
         self.send.setAccessibleName(send_label)
         self.send.setToolTip(send_label)
         self.refresh.setEnabled(not (active or pairing or scanning))
-        self.pair.setEnabled(selected and not (active or pairing or scanning))
+        reuse = self.path_settings.mode == "relay" and self.path_settings.reuse_direct
+        self.pair.setEnabled(selected and not (active or pairing or scanning or reuse))
         has_content = bool(self.attachments or self.message.toPlainText())
         self.send.setEnabled(selected and has_content and not self.staging)
         self.message.setReadOnly(self.staging)
@@ -845,6 +861,33 @@ class Window(QMainWindow):
         dialog.setWindowTitle(self.tr_key("settings"))
         dialog.setMinimumWidth(410)
         body = QVBoxLayout(dialog)
+        form = QFormLayout()
+        path = QComboBox(objectName="connectionPath")
+        for value in ("direct", "relay"):
+            path.addItem(self.tr_key("path_" + value), value)
+        path.setCurrentIndex(path.findData(self.path_settings.mode))
+        address = QLineEdit(self.path_settings.destination, objectName="relayAddress")
+        address.setMaxLength(15)
+        port = QSpinBox(objectName="relayPort")
+        port.setRange(1, 65535)
+        port.setValue(self.path_settings.port)
+        reuse = QCheckBox(self.tr_key("pi_reuse_label"))
+        reuse.setChecked(self.path_settings.reuse_direct)
+        form.addRow(self.tr_key("connection_path"), path)
+        form.addRow(self.tr_key("pi_address"), address)
+        form.addRow(self.tr_key("pi_port"), port)
+        form.addRow(reuse)
+        editable = (self.connection_state not in ACTIVE_CONNECTIONS | {"scanning"}
+                    and self.pairing_dialog is None and not self.staging)
+        path.setEnabled(editable)
+
+        def enable_relay_fields():
+            for field in (address, port, reuse):
+                field.setEnabled(editable and path.currentData() == "relay")
+
+        path.currentIndexChanged.connect(enable_relay_fields)
+        enable_relay_fields()
+        body.addLayout(form)
         language = QComboBox()
         language.addItems(["한국어", "English"])
         language.setCurrentIndex(self.language)
@@ -862,9 +905,26 @@ class Window(QMainWindow):
             body.addWidget(widget)
         body.addWidget(label(self.tr_key("local"), "muted", wrap=True))
         save = QPushButton(self.tr_key("apply"), objectName="primary")
-        save.clicked.connect(dialog.accept)
+        validation = label(name="muted", wrap=True)
+        body.addWidget(validation)
+
+        def selected_path():
+            return PathSettings(path.currentData(), address.text().strip(), port.value(), reuse.isChecked())
+
+        def apply_settings():
+            try:
+                selected_path().validate()
+            except TransportError as error:
+                validation.setText(self.tr_key(error.code))
+                return
+            dialog.accept()
+
+        save.clicked.connect(apply_settings)
         body.addWidget(save)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            settings = selected_path()
+            if settings != self.path_settings:
+                self.bridge.submit("configure_path", settings)
             self.language = language.currentIndex()
             self.theme = theme.currentData()
             self.large = bool(size.currentIndex())
@@ -876,7 +936,10 @@ class Window(QMainWindow):
             self._retranslate()
 
     def _update(self, topic, value):
-        if topic == "devices":
+        if topic == "path":
+            self.path_settings = value
+            self._update_path_caption()
+        elif topic == "devices":
             selected = self.devices.currentData()
             self.devices.blockSignals(True)
             self.devices.clear()

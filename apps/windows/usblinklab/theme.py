@@ -29,11 +29,11 @@ def stylesheet(t):
     }}
     QLabel#muted {{ color: {t['secondary']}; }}
     QLabel#exposure {{ color: {t['exposure']}; }}
-    QPushButton, QComboBox, QLineEdit, QPlainTextEdit {{
+    QPushButton, QComboBox, QLineEdit, QPlainTextEdit, QSpinBox {{
         background: {t['surface']}; border: 1px solid {t['line']};
         border-radius: 7px; padding: 6px 10px; min-height: 24px;
     }}
-    QComboBox, QLineEdit, QPlainTextEdit {{ background: {t['field']}; }}
+    QComboBox, QLineEdit, QPlainTextEdit, QSpinBox {{ background: {t['field']}; }}
     QComboBox::drop-down {{
         subcontrol-origin: padding; subcontrol-position: center right;
         width: 24px; border: none; background: transparent;

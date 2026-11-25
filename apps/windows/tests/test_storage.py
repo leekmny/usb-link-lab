@@ -85,9 +85,22 @@ def commit_received(storage, data, *, kind="text"):
     )
 
 
-def test_delete_received_message_purges_only_committed_text(tmp_path):
+def test_delete_received_message_purges_only_committed_text(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from usblinklab import storage as disk
     from usblinklab.storage import Storage
 
+    # Multiple durable commits may share a Windows wall-clock tick. Give their
+    # persisted records distinct timestamps so the ordering check is meaningful.
+    ticks = iter(datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=i)
+                 for i in range(3))
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(ticks)
+
+    monkeypatch.setattr(disk, "datetime", Clock)
     storage = Storage(tmp_path / "app")
     message = commit_received(storage, b"committed text")
     other = commit_received(storage, b"another text")

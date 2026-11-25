@@ -17,9 +17,14 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from usblinklab import PROTOCOL_REVISION, __version__
 from usblinklab.controller import Controller
 from usblinklab.pairing import encode_pairing_qr
+from usblinklab.pi_transport import PathSettings
 from usblinklab.pin_pairing import _Exchange
 from usblinklab.protocol import Mode
 from usblinklab.window import Window
+
+
+def production_controller(root):
+    return Controller(root, path_settings=PathSettings.load(root))
 
 
 def _smoke_pairing():
@@ -39,7 +44,7 @@ def smoke(app, marker):
     _smoke_pairing()
     with TemporaryDirectory(prefix="USBLinkLab-smoke-") as scratch:
         root = Path(scratch)
-        controller = Controller(root)
+        controller = production_controller(root)
         window = Window(controller, root)
         window.show()
         app.processEvents()
@@ -83,7 +88,7 @@ def main():
     if not lock.tryLock(0):
         QMessageBox.warning(None, "USBLinkLab", "이미 실행 중입니다. USBLinkLab is already running.")
         return 1
-    controller = Controller(root)
+    controller = production_controller(root)
     try:
         window = Window(controller, root)
         window.show()
