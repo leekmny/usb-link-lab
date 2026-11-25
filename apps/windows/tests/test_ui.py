@@ -201,3 +201,47 @@ def test_pairing_refresh_hides_stale_code_and_escape_cancels(tmp_path):
     assert not dialog.isVisible()
     window.close()
     app.processEvents()
+
+
+def test_received_message_delete_requires_confirmation_and_clears_preview(tmp_path, monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    bridge = Bridge()
+    window = Window(bridge, tmp_path)
+    window.show()
+    app.processEvents()
+    event = {
+        "id": "in:0123456789abcdef0123456789abcdef", "direction": "incoming", "status": "complete",
+        "mode": Mode.AES256GCM, "kind": "text", "name": "", "size": 10, "transferred": 10,
+        "path": tmp_path / "content", "text": "saved text",
+    }
+    bridge.changed.emit("item", event)
+    window.history.click()
+    window.items.setCurrentItem(window.items.topLevelItem(0))
+    window._open_details()
+
+    assert window.preview.text() == "saved text"
+    assert window.delete_message.isVisible()
+    confirmations = []
+
+    def reject(title, message):
+        confirmations.append((title, message))
+        return False
+
+    monkeypatch.setattr(window, "_confirm", reject)
+    window.delete_message.click()
+    assert len(confirmations) == 1
+    assert bridge.commands == []
+    monkeypatch.setattr(window, "_confirm", lambda *_: True)
+    window.delete_message.click()
+    assert bridge.commands == [("delete_received_message", event["id"])]
+
+    bridge.changed.emit("removed", event["id"])
+    assert window.items.topLevelItemCount() == 0
+    assert window.preview.text() == ""
+    assert not window.delete_message.isVisible()
+
+    bridge.changed.emit("item", {**event, "id": "in:file", "kind": "file", "text": None})
+    window.items.setCurrentItem(window.items.topLevelItem(0))
+    assert not window.delete_message.isVisible()
+    window.close()
+    app.processEvents()

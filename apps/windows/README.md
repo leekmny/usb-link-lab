@@ -68,3 +68,7 @@ ShowAliases locally to identify a selection. The application's connection
 status covers its separate authentication and protocol checks. A successful
 application handshake still requires the actual cable test to establish the
 physical result.
+
+## Delete a received message
+
+In 0.2.1, select a completed received text message in Transfer history, choose Delete message in the details panel, and confirm to remove the record and saved body from this PC.

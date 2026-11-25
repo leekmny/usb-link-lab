@@ -446,10 +446,12 @@ class Window(QMainWindow):
         self.preview.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.retry = self._button("retry", self._retry_item)
         self.remove = self._button("remove", self._remove_item)
+        self.delete_message = self._button("delete_message", self._delete_message)
         self.export = self._button("export", self._export_item)
         self.cancel = self._button("cancel", self._cancel_session)
         for widget in (self.detail_heading, self.detail_name, self.detail_security, self.detail_status,
-                       self.progress, self.preview, self.retry, self.remove, self.export, self.cancel):
+                       self.progress, self.preview, self.retry, self.remove, self.delete_message,
+                       self.export, self.cancel):
             inspector.addWidget(widget)
         inspector.addStretch()
         self.root_layout = layout
@@ -768,6 +770,10 @@ class Window(QMainWindow):
         elif topic == "item":
             self._set_row(value)
         elif topic == "removed":
+            if getattr(self, "_preview_key", None) and self._preview_key[0] == value:
+                self._preview_key = None
+                self._has_preview = False
+                self.preview.clear()
             removed = self.rows.pop(value, None)
             if removed is not None:
                 row, _ = removed
@@ -858,7 +864,7 @@ class Window(QMainWindow):
         self.detail_security.setVisible(event is not None)
         self.detail_status.setVisible(event is not None)
         self.progress.setVisible(event is not None and event["status"] in {"sending", "receiving", "verifying"})
-        for widget in (self.preview, self.retry, self.remove, self.export):
+        for widget in (self.preview, self.retry, self.remove, self.delete_message, self.export):
             widget.hide()
         self.cancel.setVisible(self.connection_state in ACTIVE_CONNECTIONS)
         if event is None:
@@ -876,6 +882,7 @@ class Window(QMainWindow):
         self.remove.setVisible(event["direction"] == "outgoing" and status in {
             "queued", "paused", "interrupted", "unconfirmed",
         })
+        self.delete_message.setVisible(self._can_delete_message(event))
         self.export.setVisible(bool(event.get("path")))
         preview_key = (event["id"], status, event.get("text"))
         if getattr(self, "_preview_key", None) != preview_key:
@@ -919,6 +926,17 @@ class Window(QMainWindow):
         event = self._selected()
         if event is not None:
             self.bridge.submit("remove", event["id"])
+
+    @staticmethod
+    def _can_delete_message(event):
+        return (event is not None and event["direction"] == "incoming"
+                and event["status"] == "complete" and event["kind"] == "text"
+                and bool(event.get("path")))
+
+    def _delete_message(self):
+        event = self._selected()
+        if self._can_delete_message(event) and self._confirm("delete_message", self.tr_key("delete_message_explain")):
+            self.bridge.submit("delete_received_message", event["id"])
 
     def _export_item(self):
         event = self._selected()

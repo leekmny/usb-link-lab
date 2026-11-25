@@ -70,3 +70,77 @@ def test_staged_png_preserves_the_original_representation(tmp_path):
     assert job.name == "synthetic.png"
     assert job.media_type == "image/png"
     assert job.path.read_bytes() == png
+
+
+def commit_received(storage, data, *, kind="text"):
+    import hashlib
+    from usblinklab.protocol import Mode
+
+    transfer = storage.begin_receive(len(data))
+    transfer.write(data)
+    return storage.commit_receive(
+        transfer, mode=Mode.AES256GCM, kind=kind, name="" if kind == "text" else "sample.bin",
+        media_type="text/plain; charset=utf-8" if kind == "text" else "application/octet-stream",
+        size=len(data), sha256=hashlib.sha256(data).hexdigest(),
+    )
+
+
+def test_delete_received_message_purges_only_committed_text(tmp_path):
+    from usblinklab.storage import Storage
+
+    storage = Storage(tmp_path / "app")
+    message = commit_received(storage, b"committed text")
+    other = commit_received(storage, b"another text")
+    attachment = commit_received(storage, b"attachment", kind="file")
+
+    for invalid in ("../outside", "in:generation:wire-id", attachment.id):
+        with pytest.raises(ValueError):
+            storage.delete_received_message(invalid)
+
+    assert storage.delete_received_message(message.id)
+    assert not message.path.parent.exists()
+    recovered = Storage(tmp_path / "app").received()
+    assert [item.id for item in recovered] == [other.id, attachment.id]
+    assert attachment.path.read_bytes() == b"attachment"
+    with pytest.raises((ValueError, FileNotFoundError)):
+        storage.delete_received_message(message.id)
+
+
+def test_delete_received_message_recovers_after_interrupted_cleanup(tmp_path, monkeypatch):
+    from usblinklab.storage import Storage
+
+    root = tmp_path / "app"
+    storage = Storage(root)
+    message = commit_received(storage, b"recoverable cleanup")
+    unlink = Path.unlink
+
+    def locked_content(path, *args, **kwargs):
+        if path.name == "content":
+            raise PermissionError("fixture content is locked")
+        return unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(Path, "unlink", locked_content)
+        assert not storage.delete_received_message(message.id)
+        assert storage.received() == []
+        assert not message.path.exists()
+        assert Storage(root).received() == []
+
+    reopened = Storage(root)
+    assert reopened.received() == []
+    assert list(reopened.complete.iterdir()) == []
+
+
+def test_delete_received_message_preserves_damaged_record(tmp_path):
+    import json
+    from usblinklab.storage import Storage
+
+    storage = Storage(tmp_path / "app")
+    message = commit_received(storage, b"preserved text")
+    record = message.path.parent / "metadata.json"
+    record.write_text(json.dumps({"id": message.id, "kind": "text"}), encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        storage.delete_received_message(message.id)
+    assert message.path.read_bytes() == b"preserved text"
+    assert record.exists()

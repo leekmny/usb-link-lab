@@ -228,3 +228,32 @@ def test_qr_authenticated_but_key_save_failed_does_not_activate_session(tmp_path
     finally:
         controller.shutdown()
         app.processEvents()
+
+
+def test_worker_deletes_a_restored_received_message(tmp_path):
+    from hashlib import sha256
+
+    app = QApplication.instance() or QApplication([])
+    root = tmp_path / "client"
+    store = Storage(root / "storage")
+    payload = b"received text"
+    draft = store.begin_receive(len(payload))
+    draft.write(payload)
+    item = store.commit_receive(
+        draft, mode=Mode.AES256GCM, kind="text", name="", media_type="text/plain; charset=utf-8",
+        size=len(payload), sha256=sha256(payload).hexdigest(),
+    )
+    usb = SyntheticUSB(tmp_path / "peer", secrets.token_bytes(32))
+    controller = Controller(root, usb=usb)
+    seen = []
+    controller.changed.connect(lambda name, value: seen.append((name, value)))
+    controller.start()
+    try:
+        row_id = "in:" + item.id
+        wait_for(lambda: any(topic == "item" and value["id"] == row_id for topic, value in seen))
+        controller.submit("delete_received_message", row_id)
+        wait_for(lambda: ("removed", row_id) in seen)
+        assert store.received() == []
+        assert not item.path.exists()
+    finally:
+        controller.shutdown()

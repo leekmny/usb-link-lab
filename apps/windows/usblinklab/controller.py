@@ -86,6 +86,7 @@ class Controller(QObject):
         self.refreshing = False
         self.items = OrderedDict()
         self.progress_signals = {}
+        self.deleting_messages = set()
         self.enqueued = 0
         self.admitting = None
         self.disconnect_requested = False
@@ -531,6 +532,20 @@ class Controller(QObject):
         self.items.pop(row_id)
         self.storage.discard_job(entry.job)
         self.changed.emit("removed", row_id)
+
+    async def _delete_received_message(self, row_id):
+        if self.storage is None or not isinstance(row_id, str) or not row_id.startswith("in:"):
+            return
+        if row_id in self.deleting_messages:
+            return
+        self.deleting_messages.add(row_id)
+        try:
+            purged = await asyncio.to_thread(self.storage.delete_received_message, row_id.removeprefix("in:"))
+            self.changed.emit("removed", row_id)
+            self.changed.emit("notice" if purged else "error",
+                              "message_deleted" if purged else "message_delete_pending")
+        finally:
+            self.deleting_messages.discard(row_id)
 
     async def _export(self, source, destination):
         def copy_file():

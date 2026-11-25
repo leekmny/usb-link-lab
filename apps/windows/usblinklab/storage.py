@@ -12,12 +12,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .protocol import CHUNK_SIZE, MAX_FILE_SIZE, MAX_TEXT_SIZE, Mode, validate_filename
 
 
 TEXT_MEDIA_TYPE = "text/plain; charset=utf-8"
+_DELETED_RECEIVED = ".deleted-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +73,13 @@ class Storage:
         self.complete = self.root / "received"
         for directory in (self.outgoing, self.incoming, self.complete):
             directory.mkdir(parents=True, exist_ok=True)
+        for directory in self.complete.glob(_DELETED_RECEIVED + "*"):
+            received_id = directory.name.removeprefix(_DELETED_RECEIVED)
+            try:
+                if self._valid_received_id(received_id):
+                    self._purge_deleted_record(directory)
+            except OSError:
+                continue
 
     def stage_text(self, text: str, mode: Mode) -> Job:
         if len(text) > MAX_TEXT_SIZE:
@@ -210,34 +218,84 @@ class Storage:
     def received(self, *, preview_chars: int | None = None) -> list[ReceivedItem]:
         items = []
         for record in self.complete.glob("*/metadata.json"):
+            if record.parent.name.startswith(_DELETED_RECEIVED):
+                continue
             try:
-                with record.open("rb") as stream:
-                    metadata = json.loads(stream.read(4097))
-                if not isinstance(metadata, dict) or metadata["id"] != record.parent.name:
-                    continue
-                string_fields = ("kind", "name", "media_type", "sha256", "timestamp")
-                if any(not isinstance(metadata[key], str) for key in string_fields):
-                    continue
-                if type(metadata["size"]) is not int or type(metadata["mode"]) is not int:
-                    continue
-                path = record.parent / "content"
-                if path.stat().st_size != metadata["size"]:
-                    continue
-                metadata["mode"] = Mode(metadata["mode"])
-                text = None
-                if metadata["kind"] == "text":
-                    if not 0 <= metadata["size"] <= MAX_TEXT_SIZE:
-                        continue
-                    with path.open("rb") as stream:
-                        if preview_chars is None:
-                            text = stream.read(MAX_TEXT_SIZE + 1).decode("utf-8")
-                        else:
-                            preview = stream.read(preview_chars * 4)
-                            text = codecs.getincrementaldecoder("utf-8")().decode(preview)[:preview_chars]
-                items.append(ReceivedItem(path=path, text=text, **metadata))
+                items.append(self._read_received(record, preview_chars))
             except (OSError, KeyError, TypeError, ValueError):
                 continue
         return sorted(items, key=lambda item: item.timestamp)
+
+    @staticmethod
+    def _read_received(record: Path, preview_chars: int | None) -> ReceivedItem:
+        with record.open("rb") as stream:
+            metadata = json.loads(stream.read(4097))
+        if not isinstance(metadata, dict) or metadata["id"] != record.parent.name:
+            raise ValueError("Invalid received item identity")
+        string_fields = ("kind", "name", "media_type", "sha256", "timestamp")
+        if any(not isinstance(metadata[key], str) for key in string_fields):
+            raise ValueError("Invalid received item fields")
+        if type(metadata["size"]) is not int or type(metadata["mode"]) is not int:
+            raise ValueError("Invalid received item size or protection mode")
+        path = record.parent / "content"
+        if path.stat().st_size != metadata["size"]:
+            raise ValueError("Invalid received item size")
+        metadata["mode"] = Mode(metadata["mode"])
+        text = None
+        if metadata["kind"] == "text":
+            if not 0 <= metadata["size"] <= MAX_TEXT_SIZE:
+                raise ValueError("Invalid received text size")
+            with path.open("rb") as stream:
+                if preview_chars is None:
+                    text = stream.read(MAX_TEXT_SIZE + 1).decode("utf-8")
+                else:
+                    preview = stream.read(preview_chars * 4)
+                    text = codecs.getincrementaldecoder("utf-8")().decode(preview)[:preview_chars]
+        return ReceivedItem(path=path, text=text, **metadata)
+
+    def delete_received_message(self, item_id: str) -> bool:
+        """Remove one committed text row. False means disk cleanup will retry on launch."""
+        if not self._valid_received_id(item_id):
+            raise ValueError("Invalid received item identity")
+        directory = self.complete / item_id
+        record = directory / "metadata.json"
+        payload = directory / "content"
+        if (directory.resolve(strict=True) != directory or directory.is_junction() or
+                record.is_symlink() or payload.is_symlink() or
+                not record.is_file() or not payload.is_file()):
+            raise ValueError("Received message is outside app-owned storage")
+        try:
+            item = self._read_received(record, 0)
+        except (KeyError, TypeError) as exc:
+            raise ValueError("Invalid received message metadata") from exc
+        if item.kind != "text":
+            raise ValueError("Only committed received text can be deleted")
+
+        # Keep history consistent across crashes and failed file cleanup.
+        deleted = directory.with_name(_DELETED_RECEIVED + item_id)
+        directory.rename(deleted)
+        try:
+            self._purge_deleted_record(deleted)
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def _valid_received_id(value: str) -> bool:
+        try:
+            identifier = UUID(value)
+        except (AttributeError, TypeError, ValueError):
+            return False
+        return identifier.version == 4 and identifier.hex == value
+
+    @staticmethod
+    def _purge_deleted_record(directory: Path) -> None:
+        if (directory.is_symlink() or directory.is_junction() or not directory.is_dir()
+                or directory.resolve(strict=True) != directory):
+            raise OSError("Deleted message is outside app-owned storage")
+        (directory / "content").unlink(missing_ok=True)
+        (directory / "metadata.json").unlink(missing_ok=True)
+        directory.rmdir()
 
     @staticmethod
     def _check_space(path: Path, size: int) -> None:
