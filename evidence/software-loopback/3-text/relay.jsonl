@@ -1,0 +1,2 @@
+{"ts": "2026-11-25T09:51:50.528+00:00", "event": "accepted", "session": "fc6f62a046fa453e9c695e15dcad41a9"}
+{"ts": "2026-11-25T09:51:50.539+00:00", "event": "closed", "session": "fc6f62a046fa453e9c695e15dcad41a9", "result": "closed", "bytes_windows_to_iphone": 1044, "bytes_iphone_to_windows": 1003}

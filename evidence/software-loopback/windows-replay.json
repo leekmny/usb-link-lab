@@ -1,0 +1,109 @@
+{
+  "reviewer_tool": "TShark (Wireshark) 4.6.10 (v4.6.10-0-geac916f07299).",
+  "experiments": [
+    {
+      "capture": "0-text/loopback.pcapng",
+      "verified_sha256": "b1730888959f56dd94e46d9c8d59b6acdbbc06796b648f626152062ed2ad63ee",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 49,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "0-image/loopback.pcapng",
+      "verified_sha256": "137cf1b61fd8710b7f4bd1893c40125dd2a1eb09f03cbb62645c0e5a26befba4",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 52,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "1-text/loopback.pcapng",
+      "verified_sha256": "615ce9a00d9a30f3415d8b4ac661d9ca9ba4c4c922bd313d5fd04e9267873778",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 47,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "1-image/loopback.pcapng",
+      "verified_sha256": "648a8ad9e9822413d85ec1d3320a6cae919dbad526b70b9ca55331b5d5e9aae7",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 53,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "2-text/loopback.pcapng",
+      "verified_sha256": "94ba20baa488d6ffbfe4c8b9b72281366a2c5206473e810702d87712dcf27bcb",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 47,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "2-image/loopback.pcapng",
+      "verified_sha256": "46fc289e5e061be3e3554835e66d5dd4ea5c50ef649336e35c75b871db514bbf",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 54,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "3-text/loopback.pcapng",
+      "verified_sha256": "786e660f8dc877e01820dcc93fc082d9cf1855e2e8150e460e600e2a03bde20d",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 48,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    },
+    {
+      "capture": "3-image/loopback.pcapng",
+      "verified_sha256": "78ee460a711ca13cb71cf770de4ba71a2add70c31fd6204bcf48737a32003b19",
+      "loopback_ipv4_only": true,
+      "ulab_streams": 2,
+      "pcapng_blocks": {
+        "0x1": 1,
+        "0x5": 1,
+        "0x6": 52,
+        "0xa0d0d0a": 1
+      },
+      "extracted_or_encrypted_observations": 4
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"updated_utc": "2026-11-25T09:51:52.300+00:00", "state": "stopping", "interface": "lo", "listen_address": "127.0.0.1", "listen_port": 56421, "upstream_port": 39863, "active_sessions": 0, "sessions_started": 1, "sessions_closed": 1, "sessions_rejected": 0, "last_result": "closed", "bytes_windows_to_iphone": 19573, "bytes_iphone_to_windows": 19532}

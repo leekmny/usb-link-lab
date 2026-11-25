@@ -15,5 +15,7 @@ artifacts/
 *.p8
 *.mobileprovision
 *.pcap*
+!evidence/software-loopback/*/loopback.pcapng
+/apps/raspberrypi/.hallmark/
 .env
 /apps/ios/Generated/

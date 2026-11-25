@@ -1,0 +1,445 @@
+{
+  "transport": "Linux loopback TCP",
+  "endpoints": "Two Python Session roles",
+  "source_sha256": {
+    "tools/relay_experiment.py": "3c7e464b08917bb61ceca195933239abeb8e715d1629cd9a267f932a97c1e348",
+    "tools/extract_ulab.py": "6c022b56905da9a42f4634414c878f802a533a83acb60b09cfe2cf10d0a09b10",
+    "dissectors/ulab.lua": "bab19e0a52a70c017a893c7c6648ac8e9d112c4515d1a8d23cde1aeaef8f8f8d",
+    "apps/raspberrypi/relay.py": "7f7161a4b522405fd6e69d14a41e53358c7211a9570cd67aae728c4b347cf556",
+    "apps/windows/usblinklab/protocol.py": "585dccefcdcf3220c486e2887e307eef0709b0ddd09e028278016c58a03e5020",
+    "apps/windows/usblinklab/session.py": "84894745365424656cffb79440bf700965b87aac85cdb47a7d5b52fc76e3e959",
+    "apps/windows/usblinklab/storage.py": "8b046e3c7577e30bf3d502d4913c6f5cecc277db903f2b2684e60a0e96993913"
+  },
+  "python": "3.12.16",
+  "cryptography": "46.0.7",
+  "kernel": "6.18.58.1-microsoft-standard-WSL2",
+  "ci_commit": null,
+  "tshark": "TShark (Wireshark) 4.6.5 (Git commit b40c46f83867).",
+  "dumpcap": "Dumpcap (Wireshark) 4.6.5 (Git commit b40c46f83867).",
+  "experiments": [
+    {
+      "mode": 0,
+      "mode_name": "PLAINTEXT",
+      "kind": "text",
+      "utc_start": "2026-11-25T09:51:38.941+00:00",
+      "utc_end": "2026-11-25T09:51:40.885+00:00",
+      "capture": "0-text/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 34527 or port 34765)",
+      "capture_sha256": "b1730888959f56dd94e46d9c8d59b6acdbbc06796b648f626152062ed2ad63ee",
+      "capture_size": 9268,
+      "captured_packets": 49,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 117,
+        "upstream_c2s": 117,
+        "upstream_s2c": 117,
+        "front_s2c": 117
+      },
+      "payload_bytes": 41,
+      "source_sha256": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+      "received_sha256": {
+        "client": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+        "server": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae"
+      },
+      "visible_in_data": true,
+      "recovered_files": 4,
+      "delivery": "complete ACK both directions",
+      "authentication": "header/control only",
+      "bidirectional_completion_ms": 17.14945,
+      "endpoint_pair_process_cpu_ms": 14.508484
+    },
+    {
+      "mode": 0,
+      "mode_name": "PLAINTEXT",
+      "kind": "image",
+      "utc_start": "2026-11-25T09:51:40.885+00:00",
+      "utc_end": "2026-11-25T09:51:42.929+00:00",
+      "capture": "0-image/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 33643 or port 39517)",
+      "capture_sha256": "137cf1b61fd8710b7f4bd1893c40125dd2a1eb09f03cbb62645c0e5a26befba4",
+      "capture_size": 83480,
+      "captured_packets": 52,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 18645,
+        "upstream_c2s": 18645,
+        "upstream_s2c": 18645,
+        "front_s2c": 18645
+      },
+      "payload_bytes": 18569,
+      "source_sha256": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+      "received_sha256": {
+        "client": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+        "server": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079"
+      },
+      "visible_in_data": true,
+      "recovered_files": 4,
+      "delivery": "complete ACK both directions",
+      "authentication": "header/control only",
+      "bidirectional_completion_ms": 10.343179,
+      "endpoint_pair_process_cpu_ms": 12.00795
+    },
+    {
+      "mode": 1,
+      "mode_name": "AES256GCM",
+      "kind": "text",
+      "utc_start": "2026-11-25T09:51:42.930+00:00",
+      "utc_end": "2026-11-25T09:51:44.874+00:00",
+      "capture": "1-text/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 56863 or port 43239)",
+      "capture_sha256": "615ce9a00d9a30f3415d8b4ac661d9ca9ba4c4c922bd313d5fd04e9267873778",
+      "capture_size": 9076,
+      "captured_packets": 47,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 133,
+        "upstream_s2c": 133,
+        "upstream_c2s": 133,
+        "front_s2c": 133
+      },
+      "payload_bytes": 41,
+      "source_sha256": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+      "received_sha256": {
+        "client": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+        "server": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae"
+      },
+      "visible_in_data": false,
+      "recovered_files": 0,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 9.835997,
+      "endpoint_pair_process_cpu_ms": 11.196481
+    },
+    {
+      "mode": 1,
+      "mode_name": "AES256GCM",
+      "kind": "image",
+      "utc_start": "2026-11-25T09:51:44.875+00:00",
+      "utc_end": "2026-11-25T09:51:46.770+00:00",
+      "capture": "1-image/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 56017 or port 41095)",
+      "capture_sha256": "648a8ad9e9822413d85ec1d3320a6cae919dbad526b70b9ca55331b5d5e9aae7",
+      "capture_size": 83772,
+      "captured_packets": 53,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 18661,
+        "upstream_c2s": 18661,
+        "upstream_s2c": 18661,
+        "front_s2c": 18661
+      },
+      "payload_bytes": 18569,
+      "source_sha256": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+      "received_sha256": {
+        "client": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+        "server": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079"
+      },
+      "visible_in_data": false,
+      "recovered_files": 0,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 10.074757,
+      "endpoint_pair_process_cpu_ms": 11.860344
+    },
+    {
+      "mode": 2,
+      "mode_name": "CHACHA20POLY1305",
+      "kind": "text",
+      "utc_start": "2026-11-25T09:51:46.771+00:00",
+      "utc_end": "2026-11-25T09:51:48.533+00:00",
+      "capture": "2-text/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 48167 or port 39837)",
+      "capture_sha256": "94ba20baa488d6ffbfe4c8b9b72281366a2c5206473e810702d87712dcf27bcb",
+      "capture_size": 9076,
+      "captured_packets": 47,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 133,
+        "upstream_c2s": 133,
+        "upstream_s2c": 133,
+        "front_s2c": 133
+      },
+      "payload_bytes": 41,
+      "source_sha256": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+      "received_sha256": {
+        "client": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+        "server": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae"
+      },
+      "visible_in_data": false,
+      "recovered_files": 0,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 9.663637,
+      "endpoint_pair_process_cpu_ms": 11.280606
+    },
+    {
+      "mode": 2,
+      "mode_name": "CHACHA20POLY1305",
+      "kind": "image",
+      "utc_start": "2026-11-25T09:51:48.534+00:00",
+      "utc_end": "2026-11-25T09:51:50.311+00:00",
+      "capture": "2-image/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 53033 or port 33049)",
+      "capture_sha256": "46fc289e5e061be3e3554835e66d5dd4ea5c50ef649336e35c75b871db514bbf",
+      "capture_size": 83872,
+      "captured_packets": 54,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 18661,
+        "upstream_c2s": 18661,
+        "upstream_s2c": 18661,
+        "front_s2c": 18661
+      },
+      "payload_bytes": 18569,
+      "source_sha256": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+      "received_sha256": {
+        "client": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+        "server": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079"
+      },
+      "visible_in_data": false,
+      "recovered_files": 0,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 9.694557,
+      "endpoint_pair_process_cpu_ms": 11.489469
+    },
+    {
+      "mode": 3,
+      "mode_name": "HMACSHA256",
+      "kind": "text",
+      "utc_start": "2026-11-25T09:51:50.312+00:00",
+      "utc_end": "2026-11-25T09:51:52.060+00:00",
+      "capture": "3-text/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 53359 or port 35013)",
+      "capture_sha256": "786e660f8dc877e01820dcc93fc082d9cf1855e2e8150e460e600e2a03bde20d",
+      "capture_size": 9368,
+      "captured_packets": 48,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 149,
+        "upstream_c2s": 149,
+        "upstream_s2c": 149,
+        "front_s2c": 149
+      },
+      "payload_bytes": 41,
+      "source_sha256": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+      "received_sha256": {
+        "client": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae",
+        "server": "a86250f0c523bcf360f25e0acbfad3416e637af9cd343a997bf431e245e921ae"
+      },
+      "visible_in_data": true,
+      "recovered_files": 4,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 8.988434,
+      "endpoint_pair_process_cpu_ms": 10.623748
+    },
+    {
+      "mode": 3,
+      "mode_name": "HMACSHA256",
+      "kind": "image",
+      "utc_start": "2026-11-25T09:51:52.061+00:00",
+      "utc_end": "2026-11-25T09:51:53.907+00:00",
+      "capture": "3-image/loopback.pcapng",
+      "interface": "lo",
+      "bpf": "tcp and host 127.0.0.1 and (port 56421 or port 39863)",
+      "capture_sha256": "78ee460a711ca13cb71cf770de4ba71a2add70c31fd6204bcf48737a32003b19",
+      "capture_size": 83864,
+      "captured_packets": 52,
+      "legs": {
+        "front": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        },
+        "upstream": {
+          "CH": 1,
+          "SH": 1,
+          "CF": 1,
+          "OPEN": 2,
+          "ACK": 4,
+          "META": 2,
+          "DATA": 2,
+          "END": 2
+        }
+      },
+      "data_record_bytes": {
+        "front_c2s": 18677,
+        "upstream_s2c": 18677,
+        "upstream_c2s": 18677,
+        "front_s2c": 18677
+      },
+      "payload_bytes": 18569,
+      "source_sha256": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+      "received_sha256": {
+        "client": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079",
+        "server": "9c6a30e4f07160d26bfb0e65a065865bfc7f6058772c7183c015247db4701079"
+      },
+      "visible_in_data": true,
+      "recovered_files": 4,
+      "delivery": "complete ACK both directions",
+      "authentication": "endpoint authenticated body",
+      "bidirectional_completion_ms": 10.486215,
+      "endpoint_pair_process_cpu_ms": 12.072927
+    }
+  ]
+}
