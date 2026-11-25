@@ -13,6 +13,10 @@ The mode is frozen at enqueue. A complete delivery requires the receiver's durab
 
 Open a received text item in History and select Delete message to remove a single local copy. To remove several, choose Select in History, mark the received messages, select Delete selected, and confirm the count.
 
+## Reconnect over USB
+
+With the iPhone app open in the foreground and the device unlocked, Windows 0.2.3 or later retries the same paired iPhone after an unexpected USB disconnect. The iPhone accepts a fresh authenticated session. Resume the iPhone queue if items were waiting when the connection dropped. Interrupted or unconfirmed items require an explicit retry.
+
 ## Project
 
 - [ULAB v1 shared protocol](../../protocol/PROTOCOL_V1.md)

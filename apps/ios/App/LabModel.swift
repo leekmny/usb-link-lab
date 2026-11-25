@@ -137,7 +137,7 @@ struct LabConnection {
         case "starting": return .starting
         case "handshake": return .handshake
         case "listener_failed", "storage_error": return .unavailable
-        case "connection_closed", "protocol_error", "timeout", "retrying", "restart": return .reconnecting
+        case "connection_closed", "protocol_error", "reconnect_waiting", "timeout", "retrying", "restart": return .reconnecting
         default: return paired ? .waiting : .unpaired
         }
     }
@@ -153,7 +153,8 @@ struct LabConnection {
         case "background": .background
         case "listener_failed": .listenerFailed
         case "protocol_error": .protocolFailed
-        case "connection_closed", "restart": .disconnected
+        case "connection_closed", "reconnect_waiting": .reconnectInstruction
+        case "restart": .disconnected
         case "timeout": .timeout
         case "storage_error": .storage
         case "cancelled", "paused": .pausedInstruction

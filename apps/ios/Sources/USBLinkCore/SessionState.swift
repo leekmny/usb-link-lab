@@ -60,6 +60,8 @@ struct JournalEntry: Codable {
 struct QueueJournal: Codable {
     var entries: [JournalEntry] = []
     var paused = false
+    // Missing in existing journals. An explicit pause still requires Resume.
+    var reconnectWhilePaused: Bool?
     // Recorded before disk cleanup so an interrupted deletion cannot restore a message.
     var removingReceived: Set<UUID>?
 }
@@ -128,6 +130,7 @@ final class LiveSession {
     let stream: SessionStream
     var peer: Data?
     var keys: (c2s: DirectionKeys, s2c: DirectionKeys)?
+    var receivesWhilePaused = false
     var sendBudget = SessionBudget()
     var receiveBudget = SessionBudget()
     var localIDs = Set<Data>()

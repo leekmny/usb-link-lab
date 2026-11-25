@@ -31,6 +31,7 @@ public actor USBServer {
     private var listener: LoopbackListener?
     private var listenerID: UUID?
     private var listenerIsReady = false
+    private var listenerRetry: Task<Void, Never>?
     private var pendingReconnect: (stream: SessionStream, accepted: ContinuousClock.Instant, timer: Task<Void, Never>)?
     private var foreground = false
     private var staging = Set<UUID>()
@@ -80,6 +81,12 @@ public actor USBServer {
                 journal.entries.append(JournalEntry(id: row.id, direction: .incoming, mode: row.mode,
                     peer: nil, order: .distantPast, metadata: row.metadata, state: .completed, bytes: row.bytes))
             }
+        }
+        let hadPendingTransfers = journal.entries.contains {
+            [.queued, .sending, .receiving].contains($0.state)
+        }
+        if !journal.paused && secret != nil && hadPendingTransfers {
+            journal.reconnectWhilePaused = true
         }
         for index in journal.entries.indices {
             let entry = journal.entries[index]
@@ -163,8 +170,20 @@ public actor USBServer {
         secret.map { Data(SHA256.hash(data: Data("ULAB1/local-peer/v1".utf8) + $0)) }
     }
 
-    private var hasWork: Bool {
-        session?.keys != nil || !staging.isEmpty || journal.entries.contains { $0.state == .queued }
+    private var admitsSavedPeer: Bool {
+        secret != nil && (!journal.paused || journal.reconnectWhilePaused == true)
+    }
+
+    private var waitingStatus: String {
+        if journal.paused && !admitsSavedPeer { return "paused" }
+        if usesSystemServices && !listenerIsReady { return "starting" }
+        return journal.paused ? "reconnect_waiting" : "listening"
+    }
+
+    private var hasWork: Bool { session?.keys != nil || hasPendingOutgoing }
+
+    var hasPendingOutgoing: Bool {
+        !staging.isEmpty || journal.entries.contains { $0.state == .queued }
     }
 
     public func setForeground(_ active: Bool) {
@@ -177,7 +196,7 @@ public actor USBServer {
                 pairingStatus = .idle
             }
             stopListener()
-            disconnect("background", pause: hasWork)
+            disconnect("background", pause: hasPendingOutgoing, recoverConnection: true)
         }
     }
 
@@ -237,23 +256,23 @@ public actor USBServer {
     }
 
     private func startListener() {
+        listenerRetry?.cancel()
+        listenerRetry = nil
         guard foreground else { status = "background"; publish(); return }
         guard secret != nil || armed != nil else { status = "unpaired"; publish(); return }
         if listener != nil {
-            if session == nil {
-                status = journal.paused ? "paused" : (listenerIsReady ? "listening" : "starting")
-            }
+            if session == nil { status = waitingStatus }
             publish()
             return
         }
         if !usesSystemServices {
-            status = journal.paused ? "paused" : "listening"
+            status = waitingStatus
             publish()
             return
         }
         let id = UUID()
         listenerID = id
-        status = journal.paused ? "paused" : "starting"
+        status = waitingStatus
         do {
             listener = try LoopbackListener(onReady: { [weak self] in
                 Task { await self?.listenerReady(id) }
@@ -267,6 +286,8 @@ public actor USBServer {
     }
 
     private func stopListener() {
+        listenerRetry?.cancel()
+        listenerRetry = nil
         listenerID = nil
         listenerIsReady = false
         listener?.stop()
@@ -277,7 +298,7 @@ public actor USBServer {
         guard listenerID == id else { return }
         listenerIsReady = true
         guard session == nil else { return }
-        status = journal.paused ? "paused" : "listening"
+        status = waitingStatus
         publish()
     }
 
@@ -288,12 +309,18 @@ public actor USBServer {
             pairingStatus = .failed
         }
         stopListener()
-        disconnect("listener_failed", pause: session != nil)
+        disconnect("listener_failed", pause: hasPendingOutgoing, recoverConnection: true)
+        guard foreground, admitsSavedPeer else { return }
+        listenerRetry = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.startListener()
+        }
     }
 
     func accept(_ stream: SessionStream, listenerID expected: UUID? = nil) {
         guard listenerID == expected, foreground,
-              armed != nil || (secret != nil && !journal.paused) else { stream.close(); return }
+              armed != nil || admitsSavedPeer else { stream.close(); return }
         let accepted = ContinuousClock.now
         if let session {
             guard session.readyEnqueued, session.incoming == nil, session.outgoing == nil,
@@ -319,9 +346,9 @@ public actor USBServer {
         let pending = pendingReconnect
         pendingReconnect = nil
         pending?.timer.cancel()
-        disconnect("listening", pause: false)
+        disconnect(waitingStatus, pause: false, recoverConnection: true)
         guard let pending else { return }
-        guard foreground, !journal.paused, secret != nil,
+        guard foreground, admitsSavedPeer,
               pending.accepted.advanced(by: .seconds(5)) > .now else { pending.stream.close(); return }
         beginSession(pending.stream, accepted: pending.accepted)
     }
@@ -361,8 +388,9 @@ public actor USBServer {
             }
             s.handshakeDeadline = .now.advanced(by: .seconds(10))
         } else {
-            guard prefix == Wire.magic, let secret, !journal.paused else { throw SessionFault.protocolViolation }
+            guard prefix == Wire.magic, let secret, admitsSavedPeer else { throw SessionFault.protocolViolation }
             psk = secret
+            s.receivesWhilePaused = journal.reconnectWhilePaused == true
             s.handshakeDeadline = accepted.advanced(by: .seconds(10))
         }
         armTimeout(s)
@@ -407,8 +435,9 @@ public actor USBServer {
     private func checkTimeout(_ generation: LiveSession, at deadline: ContinuousClock.Instant) {
         guard session === generation, generation.watchdogAt == deadline else { return }
         generation.watchdogAt = nil
-        if generation.expired { disconnect("timeout", pause: generation.keys != nil) }
-        else { armTimeout(generation) }
+        if generation.expired {
+            fail(SessionFault.timeout, session: generation)
+        } else { armTimeout(generation) }
     }
 
     func validate(_ generation: LiveSession) throws {
@@ -421,10 +450,13 @@ public actor USBServer {
             clearInvitation()
             pairingStatus = .idle
         }
+        listenerRetry?.cancel()
+        listenerRetry = nil
         disconnect("cancelled", pause: true)
     }
 
-    func disconnect(_ reason: String, pause: Bool) {
+    func disconnect(_ reason: String, pause: Bool, recoverConnection: Bool = false) {
+        let allowRecovery = recoverConnection && admitsSavedPeer
         pendingReconnect?.timer.cancel()
         pendingReconnect?.stream.close()
         pendingReconnect = nil
@@ -449,18 +481,24 @@ public actor USBServer {
         if pairingStatus == .connecting { pairingStatus = .failed }
         if armed == nil && secret == nil { stopListener() }
         if pause { journal.paused = true }
+        journal.reconnectWhilePaused = journal.paused && allowRecovery ? true : nil
         status = reason
-        do { try persist() } catch { status = "storage_error"; journal.paused = true }
+        do { try persist() } catch {
+            status = "storage_error"
+            journal.paused = true
+            journal.reconnectWhilePaused = nil
+        }
         publish()
     }
 
     public func resume() {
         journal.paused = false
+        journal.reconnectWhilePaused = nil
         do { try persist() } catch { journal.paused = true; status = "storage_error"; publish(); return }
         if let session { scheduleNext(session) }
         else {
             if listener == nil { startListener() }
-            else { status = "listening" }
+            else { status = waitingStatus }
         }
         publish()
     }
@@ -574,6 +612,7 @@ public actor USBServer {
         journal.entries[index].endPending = false
         journal.entries[index].state = .queued
         journal.paused = false
+        journal.reconnectWhilePaused = nil
         do { try persist() } catch { journal = previous; throw error }
         if let session, session.keys != nil { requestDrain(session) }
         else if session != nil { disconnect("retrying", pause: false) }

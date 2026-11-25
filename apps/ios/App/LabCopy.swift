@@ -25,7 +25,7 @@ enum LabLanguage: String, CaseIterable, Identifiable {
 
 enum LabCopy {
     case workbench, history, settings
-    case synthetic, connection, unpaired, starting, waiting, linked, reconnecting, paused, unavailable
+    case synthetic, connection, unpaired, starting, waiting, linked, reconnecting, reconnectInstruction, paused, unavailable
     case setupLink, firstPairingInstruction, hostInstruction, linkedInstruction, pausedInstruction, resumeQueue, port, offlineTitle
     case compose, draftHint, draftPlaceholder, textLimit, protection, photo, file, addToQueue
     case plaintextExposure, authenticatedExposure, encryptedExposure, confidentiality, authenticity, yes, no
@@ -59,6 +59,8 @@ enum LabCopy {
         case .waiting: ("Windows 연결 대기", "Waiting for Windows")
         case .linked: ("연결됨", "Connected")
         case .reconnecting: ("다시 연결 대기", "Waiting to reconnect")
+        case .reconnectInstruction: ("USB 케이블을 연결한 채 두 앱을 열어 두면 Windows에서 다시 연결을 시도합니다.",
+                                     "Keep both apps open and the USB cable connected so Windows can try reconnecting.")
         case .paused: ("대기열 일시 정지", "Queue paused")
         case .unavailable: ("연결 문제", "Connection issue")
         case .setupLink: ("페어링 설정", "Set up pairing")
@@ -184,11 +186,14 @@ enum LabCopy {
         case .testOnly: ("시뮬레이터 예시에서는 실제 전송을 실행하지 않습니다.", "The simulator example does not perform real transfers.")
         case .testMode: ("합성 예시", "Synthetic example")
         case .connectionScope: ("iPhone에는 로컬 소켓이 표시됩니다. 실제 USB 연결 여부는 Windows 앱에서 선택한 기기와 케이블 테스트로 확인하세요.", "The iPhone sees a local socket. Confirm physical USB with the selected device in the Windows app and a cable test.")
-        case .listenerFailed: ("수신 대기를 시작할 수 없습니다. 앱을 다시 열고 Windows에서 다시 연결해 보세요.", "The listener could not start. Reopen the app and reconnect from Windows.")
+        case .listenerFailed: ("USB 수신 대기를 시작할 수 없습니다. 앱을 열어 두고 다시 시도할 때까지 기다려 주세요.",
+                               "The USB listener could not start. Keep this app open while it retries.")
         case .protocolFailed: ("세션 검사가 실패했습니다. 두 앱의 프로토콜 버전과 페어링 키를 확인하세요.", "The session check failed. Verify the protocol version and pairing key in both apps.")
-        case .timeout: ("시간 초과로 세션이 종료되었습니다. 케이블과 Windows 앱을 확인한 뒤 다시 연결하세요.", "The session timed out. Check the cable and Windows app, then reconnect.")
+        case .timeout: ("시간 초과로 연결이 끊겼습니다. USB 케이블을 연결하고 두 앱을 열어 두면 Windows에서 재연결을 시도합니다.",
+                          "The session timed out. Keep both apps open with USB connected so Windows can try reconnecting.")
         case .disconnected: ("연결이 종료되었습니다. Windows에서 기기와 케이블을 확인하고 다시 연결하세요.", "The connection closed. Check the device and cable in Windows, then reconnect.")
-        case .background: ("앱이 활성 상태를 벗어나 세션이 종료되었습니다. 두 앱을 열고 Windows에서 다시 연결하세요.", "The app became inactive and the session closed. Open both apps and reconnect from Windows.")
+        case .background: ("앱이 비활성화되어 세션이 종료되었습니다. 이 앱을 다시 열면 Windows에서 재연결을 시도할 수 있습니다.",
+                             "The app became inactive and the session closed. Reopen it so Windows can try reconnecting.")
         case .storage: ("기기에 파일을 보관할 수 없습니다. 저장 공간과 파일 접근 가능 여부를 확인하세요.", "The item could not be stored on this device. Check available space and access to the source file.")
         case .operationFailed: ("요청을 처리할 수 없습니다. 항목 상태를 확인하고 다시 시도하세요.", "The action failed. Check the item status and try again.")
         case .queueFailed: ("대기열에 추가할 수 없습니다. 페어링과 대기열, 기기 저장 공간을 확인하세요.", "The item could not be queued. Check pairing, queue capacity, and device storage.")

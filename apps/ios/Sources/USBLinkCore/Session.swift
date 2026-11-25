@@ -50,8 +50,11 @@ extension USBServer {
 
     func fail(_ error: Error, session s: LiveSession) {
         guard session === s else { return }
-        let reason = (error as? SessionFault)?.errorDescription ?? "protocol_error"
-        disconnect(reason, pause: s.keys != nil)
+        let fault = error as? SessionFault
+        let reason = fault?.errorDescription ?? "protocol_error"
+        let recover = s.keys == nil || fault == .closed || fault == .timeout
+        let pause = s.keys != nil && (!recover || hasPendingOutgoing || s.readyEnqueued)
+        disconnect(reason, pause: pause, recoverConnection: recover)
     }
 
     // A single actor reserves sequences and commits even queued bytes immediately.
@@ -115,7 +118,7 @@ extension USBServer {
     private func receive(_ h: FrameHeader, body: Data, session s: LiveSession) async throws {
         switch h.type {
         case .open:
-            guard !journal.paused else { throw SessionFault.closed }
+            guard !journal.paused || s.receivesWhilePaused else { throw SessionFault.closed }
             try WireBody.decodeOpen(body, mode: h.mode)
             guard !s.requestReceived, s.incoming == nil, s.peerIDs.count < SessionBudget.idLimit,
                   s.peerIDs.insert(h.itemID).inserted else { throw SessionFault.protocolViolation }

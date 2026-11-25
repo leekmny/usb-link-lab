@@ -176,8 +176,6 @@ final class SessionTests: XCTestCase {
             XCTFail("Saved-key reconnect rewrote the credential")
         })
         await reopened.setForeground(true)
-        // Foreground loss paused the old session. Resume through the normal queue action.
-        await reopened.resume()
         let client = try await TestClient(server: reopened, psk: candidate)
         try await wait(reopened) { $0.connected }
         client.stream.close()
@@ -576,6 +574,98 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(open.type, .open)
         XCTAssertEqual(open.mode, .chacha20Poly1305)
         await s.cancelActive()
+    }
+
+
+    func testIdleTransportLossAllowsSendingAfterFreshAuthentication() async throws {
+        let s = try await server()
+        let initial = try await TestClient(server: s)
+        try await wait(s) { $0.connected }
+        await initial.stream.output.abort()
+        let disconnected = try await wait(s) { $0.status == "connection_closed" }
+        XCTAssertFalse(disconnected.paused)
+
+        let recovered = try await TestClient(server: s)
+        try await wait(s) { $0.connected }
+        try await s.enqueueText("new after reconnect", mode: .hmacSHA256)
+        let (open, _) = try await recovered.next()
+        XCTAssertEqual(open.type, .open)
+        XCTAssertEqual(open.mode, .hmacSHA256)
+        await s.cancelActive()
+    }
+
+    func testTransportLossAllowsFreshAuthenticationWithoutReplayingTheQueue() async throws {
+        let s = try await server()
+        let before = try await TestClient(server: s)
+        try await wait(s) { $0.connected }
+        try await s.enqueueText("interrupted", mode: .aes256GCM)
+        let (first, _) = try await before.next()
+        XCTAssertEqual(first.type, .open)
+        try await s.enqueueText("waiting", mode: .hmacSHA256)
+        await before.stream.output.abort()
+
+        let disconnected = try await wait(s) { $0.status == "connection_closed" }
+        XCTAssertTrue(disconnected.paused)
+        XCTAssertEqual(disconnected.records.map(\.state), [.interrupted, .queued])
+
+        // A failed attempt cannot prevent the saved peer trying again.
+        let invalid = await connectStream(s)
+        try await invalid.write(Data("invalid!".utf8))
+        let eof = try await invalid.read(upTo: 1)
+        XCTAssertTrue(eof.isEmpty)
+
+        let after = try await TestClient(server: s)
+        try await wait(s) { $0.connected }
+        let incomingID = randomBytes(16)
+        let content = Data("new message".utf8)
+        let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8",
+                                        size: UInt64(content.count))
+        try await after.open(incomingID, mode: .chacha20Poly1305)
+        try await after.send(.meta, .chacha20Poly1305, incomingID, metadata.encode())
+        try await after.send(.data, .chacha20Poly1305, incomingID, content)
+        try await after.end(incomingID, mode: .chacha20Poly1305, bytes: content, chunks: 1)
+        let (_, complete) = try await after.next()
+        XCTAssertEqual(try WireBody.decodeAck(complete), .complete)
+        let recovered = await s.snapshot()
+        XCTAssertTrue(recovered.paused)
+        XCTAssertEqual(recovered.records.map(\.state), [.interrupted, .queued, .completed])
+
+        await s.resume()
+        let (resumed, _) = try await after.next()
+        XCTAssertEqual(resumed.type, .open)
+        XCTAssertEqual(resumed.mode, .hmacSHA256)
+        await s.cancelActive()
+    }
+
+    func testForegroundRecoverySurvivesRelaunchButExplicitCancellationRequiresResume() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let s = try await server(in: root)
+        let initial = try await TestClient(server: s)
+        try await wait(s) { $0.connected }
+        try await s.enqueueText("active", mode: .plaintext)
+        _ = try await initial.next()
+        try await s.enqueueText("queued", mode: .aes256GCM)
+        await s.setForeground(false)
+        let eof = try await initial.stream.read(upTo: 1)
+        XCTAssertTrue(eof.isEmpty)
+
+        let reopened = try USBServer(root: root, secret: TestClient.psk)
+        await reopened.setForeground(true)
+        _ = try await TestClient(server: reopened)
+        try await wait(reopened) { $0.connected && $0.paused }
+
+        await reopened.cancelActive()
+        await reopened.setForeground(false)
+        let cancelled = try USBServer(root: root, secret: TestClient.psk)
+        await cancelled.setForeground(true)
+        let refused = await connectStream(cancelled)
+        let blocked = try await refused.read(upTo: 1)
+        XCTAssertTrue(blocked.isEmpty)
+
+        await cancelled.resume()
+        _ = try await TestClient(server: cancelled)
+        try await wait(cancelled) { $0.connected && !$0.paused }
+        await cancelled.cancelActive()
     }
 
     func testTransportResetAfterDrainReadyDiscardsWaitingReconnect() async throws {
