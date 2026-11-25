@@ -177,6 +177,45 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: content), Data("test".utf8))
     }
 
+    func testBatchDeleteRemovesTwoSelectedMessagesAfterRelaunch() async throws {
+        let selected = [UUID(), UUID()]
+        let kept = UUID()
+        let deletedFiles = try selected.map(commitMessage)
+        let keptFile = try commitMessage(kept)
+        let server = try USBServer(root: root, secret: nil)
+
+        try await server.deleteReceivedMessages(Set(selected))
+
+        let current = await server.snapshot()
+        XCTAssertEqual(current.records.map(\.id), [kept])
+        for file in deletedFiles {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: file.deletingLastPathComponent().path))
+        }
+        XCTAssertEqual(try Data(contentsOf: keptFile), Data("test".utf8))
+        let reopened = try USBServer(root: root, secret: nil)
+        let persisted = await reopened.snapshot()
+        XCTAssertEqual(persisted.records.map(\.id), [kept])
+    }
+
+    func testBatchDeleteValidatesEverySelectionBeforeRemovingAnything() async throws {
+        let first = UUID()
+        let second = UUID()
+        let firstFile = try commitMessage(first)
+        let secondFile = try commitMessage(second)
+        let invalid = UUID()
+        let server = try USBServer(root: root, secret: nil)
+
+        do {
+            try await server.deleteReceivedMessages([first, second, invalid])
+            XCTFail("Deletion accepted a stale selection")
+        } catch SessionFault.invalidState { }
+
+        let snapshot = await server.snapshot()
+        XCTAssertEqual(Set(snapshot.records.map(\.id)), [first, second])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstFile.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondFile.path))
+    }
+
     private func commitMessage(_ id: UUID) throws -> URL {
         let data = Data("test".utf8)
         let metadata = try ItemMetadata(kind: .text, name: "", mediaType: "text/plain; charset=utf-8",
